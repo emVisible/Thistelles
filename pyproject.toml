@@ -1,0 +1,45 @@
+[project]
+name = "thistelles"
+version = "0.1.0"
+description = "macOS 全局快捷键语音输入 — 录音即转文字，直达剪贴板"
+authors = [
+    { name = "Thistelles" },
+]
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "pyaudio>=0.2.14",
+    "rumps>=0.4.0",
+    "pynput>=1.7.6",
+    "pyperclip>=1.8.2",
+    "opencc-python-reimplemented>=0.1.7",
+    "faster-whisper>=1.1.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X :: Cocoa",
+    "Operating System :: MacOS :: MacOS X",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Natural Language :: Chinese (Simplified)",
+]
+
+[project.urls]
+Homepage = "https://github.com/young/thistelles"
+Repository = "https://github.com/young/thistelles"
+
+[project.scripts]
+thistelles = "thistelles.cli:entry"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["thistelles*"]
+
+[tool.setuptools.package-data]
+thistelles = ["assets/*"]
