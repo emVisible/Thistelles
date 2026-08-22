@@ -99,7 +99,6 @@ UI_STRINGS = {
         "perm_check_title": "权限提示",
         "perm_missing_ax": "辅助功能权限未授权，全局快捷键不可用。系统设置 → 隐私与安全性 → 辅助功能",
         "perm_missing_mic": "麦克风权限被拒绝，无法录音。系统设置 → 隐私与安全性 → 麦克风",
-        "mic_default": "系统默认",
         "language": "切换语言",
         "mode": "精度模式",
         "base": "标准",
@@ -128,8 +127,6 @@ UI_STRINGS = {
         "notify_retry": "请重试",
         "notify_model_error": "模型加载失败，请重新安装或切换为标准模式",
         "notify_inference_error": "转写出错，请重试",
-        "model_downloading": "正在下载 large-v3 模型（约3GB），首次转录会较慢",
-        "not_installed": "未下载",
     },
     "en-US": {
         "start": "Start Recording",
@@ -153,7 +150,6 @@ UI_STRINGS = {
         "perm_check_title": "Permissions",
         "perm_missing_ax": "Accessibility permission missing — hotkeys disabled. System Settings → Privacy & Security → Accessibility",
         "perm_missing_mic": "Microphone permission denied — recording unavailable. System Settings → Privacy & Security → Microphone",
-        "mic_default": "System Default",
         "language": "Language",
         "mode": "Mode",
         "base": "Base",
@@ -182,8 +178,6 @@ UI_STRINGS = {
         "notify_retry": "Please try again",
         "notify_model_error": "Model load failed. Reinstall or switch to Base mode.",
         "notify_inference_error": "Transcription failed. Please retry.",
-        "model_downloading": "Downloading large-v3 model (~3GB). First transcription will be slower.",
-        "not_installed": "not cached",
     },
 }
 
