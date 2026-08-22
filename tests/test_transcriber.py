@@ -60,18 +60,31 @@ class TranscribeContractTest(unittest.TestCase):
     def test_zh_cn_converts_to_simplified(self):
         called = []
         original = tr._to_simplified
-        tr._to_simplified = lambda t: (called.append(1) or original(t))
+        tr._to_simplified = lambda t: (called.append(1) or t.replace("繁", "简"))
         try:
             with mock.patch.object(
-                tr, "_transcribe", return_value=("測試文本", "zh", None)
+                tr, "_transcribe", return_value=("含繁字", "zh", None)
             ):
                 text, err = tr.transcribe("w.wav", "zh-CN")
         finally:
             tr._to_simplified = original
         self.assertIsNone(err)
         self.assertTrue(called)
-        # opencc 实际执行了繁→简转换
-        self.assertEqual(text, "测试文本")
+        # 验证转换结果被实际采用（不依赖 opencc 在测试环境可用）
+        self.assertEqual(text, "含简字")
+
+    def test_auto_with_detected_zh_converts(self):
+        called = []
+        original = tr._to_simplified
+        tr._to_simplified = lambda t: (called.append(1) or t)
+        try:
+            with mock.patch.object(
+                tr, "_transcribe", return_value=("内容", "zh", None)
+            ):
+                tr.transcribe("w.wav", "auto")
+        finally:
+            tr._to_simplified = original
+        self.assertTrue(called)
 
     def test_auto_with_detected_zh_converts(self):
         called = []
