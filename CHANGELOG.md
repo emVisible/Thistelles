@@ -168,3 +168,27 @@ Changelog
 
 - Ghost-process accumulation across reinstalls (`_kill_app` matches real process cmdline)
 - Reinstall flow no longer exits early under `set -euo pipefail`
+
+---
+
+## 附 · 关键设计决策速览
+
+> 原 `docs/adr/` 三篇决策记录的核心结论（v0.9.0 起并入本文档，独立文件已移除）。
+
+### 单引擎 MLX（Metal GPU）
+
+- CTranslate2 在 Apple Silicon 上仅 CPU 执行（无 Metal 支持），152s 录音需等 ~105s；
+  MLX + large-v3-turbo 实测快约 8 倍且标点更完整 → 移除 CT2 兜底与 faster-whisper 依赖
+- 代价：仅支持 Apple Silicon M1+；转写中途取消在完成后生效；mlx 仅贪心解码
+
+### 输出三分法（paste / both / clipboard）
+
+- 光标插入机制 = 写剪贴板 → 合成 ⌘V → 延迟还原原剪贴板，依赖辅助功能权限
+- 粘贴动作必须先经模式门禁再执行；无权限时自动降级 clipboard，不丢文本
+- 三种模式的触发矩阵由单元测试锁定（tests/test_inserter.py）
+
+### 分发形态与权限身份
+
+- `guide.sh app` 生成手工 .app bundle：系统授权绑定应用本体，一次授权跨重装有效
+- 进程终止以安装路径为锚点匹配；应用内 flock 单实例锁双保险
+- 已知取舍：.app 依赖 uv tool 环境存在；卸载脚本会同步清理 .app 与登录项

@@ -49,4 +49,4 @@ bash guide.sh reinstall    # 重装并重启应用
 
 ## 设计决策
 
-关键架构取舍记录在 [docs/adr/](docs/adr/)，提出相关区域改动前建议先阅读。
+关键架构取舍记录在 [CHANGELOG.md](CHANGELOG.md) 附录「关键设计决策速览」，提出相关区域改动前建议先阅读。

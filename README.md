@@ -139,7 +139,7 @@ bash guide.sh test     # 提交前跑通测试
 bash guide.sh reinstall  # 源码改动后刷新本地安装
 ```
 
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。关键设计决策记录在 [docs/adr/](docs/adr/)。
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。关键设计决策速览见 [CHANGELOG.md](CHANGELOG.md) 附录。
 
 ## 🙏 致谢
 

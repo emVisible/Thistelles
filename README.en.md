@@ -117,7 +117,7 @@ bash guide.sh test        # make tests green before submitting
 bash guide.sh reinstall   # refresh local install from source changes
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Design decisions are recorded in [docs/adr/](docs/adr/).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Key design decisions are summarized in the [CHANGELOG.md](CHANGELOG.md) appendix.
 
 ## 🙏 Acknowledgments
 
