@@ -64,7 +64,7 @@ thistelles                     # 启动，菜单栏出现麦克风图标
 bash guide.sh app              # 安装 /Applications/Thistelles.app 并启动
 bash guide.sh login enable     # 开机自启
 bash guide.sh test             # 运行测试套件
-bash guide.sh prefetch         # 预下载全部转写模型（约 4.5GB）
+bash guide.sh prefetch         # 预下载全部转写模型（约 1.8GB）
 ```
 
 ### 使用方式

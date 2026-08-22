@@ -54,7 +54,7 @@ thistelles                     # launch — mic icon appears in the menu bar
 bash guide.sh app              # install /Applications/Thistelles.app and launch
 bash guide.sh login enable     # launch at login
 bash guide.sh test             # run test suite
-bash guide.sh prefetch         # pre-download all models (~4.5GB)
+bash guide.sh prefetch         # pre-download all models (~1.8GB)
 ```
 
 ## ⚙️ Configuration
