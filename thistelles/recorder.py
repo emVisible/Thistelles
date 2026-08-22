@@ -28,7 +28,7 @@ def _clean_temp_dir():
 
 
 class Recorder:
-    def __init__(self):
+    def __init__(self, device_index: int | None = None):
         self._recording = False
         self._frames: list[bytes] = []
         self._thread: threading.Thread | None = None
@@ -37,7 +37,12 @@ class Recorder:
         self._latest_amplitude = 0.0
         self._lock = threading.Lock()
         self._error: str | None = None
+        self._device_index = device_index
         _clean_temp_dir()
+
+    @property
+    def device_index(self) -> int | None:
+        return self._device_index
 
     @property
     def recording(self):
@@ -47,6 +52,53 @@ class Recorder:
     def latest_amplitude(self) -> float:
         with self._lock:
             return self._latest_amplitude
+
+    def set_device_by_name(self, name: str):
+        """按名称（子串、大小写不敏感）匹配输入设备；空串恢复系统默认。"""
+        name = (name or "").strip().lower()
+        if not name:
+            self._device_index = None
+            logger.info("input device: system default")
+            return
+        for dev in Recorder.enumerate_inputs():
+            if name in dev["name"].lower():
+                self._device_index = dev["index"]
+                logger.info("input device: %s (#%s)", dev["name"], dev["index"])
+                return
+        logger.warning("input device %r not found, keeping current", name)
+
+    @staticmethod
+    def enumerate_inputs() -> list[dict]:
+        out: list[dict] = []
+        pa = None
+        try:
+            pa = pyaudio.PyAudio()
+            for i in range(pa.get_device_count()):
+                info = pa.get_device_info_by_index(i)
+                if info.get("maxInputChannels", 0) > 0:
+                    out.append(
+                        {
+                            "index": i,
+                            "name": str(info.get("name", "")),
+                        }
+                    )
+        except Exception:
+            logger.exception("recorder: enumerate inputs failed")
+        finally:
+            if pa is not None:
+                try:
+                    pa.terminate()
+                except Exception:
+                    pass
+        return out
+
+    @property
+    def elapsed_seconds(self) -> float:
+        if not self._recording:
+            return 0.0
+        with self._lock:
+            frames = len(self._frames)
+        return frames * CHUNK / RATE
 
     def start(self):
         if self._recording:
@@ -70,13 +122,35 @@ class Recorder:
     def _record(self):
         try:
             self._pyaudio_instance = pyaudio.PyAudio()
-            self._stream = self._pyaudio_instance.open(
-                format=FORMAT,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK,
-            )
+            kwargs = {}
+            if self._device_index is not None:
+                kwargs["input_device_index"] = self._device_index
+            try:
+                self._stream = self._pyaudio_instance.open(
+                    format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    frames_per_buffer=CHUNK,
+                    **kwargs,
+                )
+            except Exception:
+                if "input_device_index" in kwargs:
+                    # 指定设备打开失败（拔出/占用）：回退系统默认并记录
+                    logger.exception(
+                        "recorder: device #%s failed, falling back to default",
+                        self._device_index,
+                    )
+                    self._device_index = None
+                    self._stream = self._pyaudio_instance.open(
+                        format=FORMAT,
+                        channels=CHANNELS,
+                        rate=RATE,
+                        input=True,
+                        frames_per_buffer=CHUNK,
+                    )
+                else:
+                    raise
             logger.debug("recording: stream opened")
         except Exception as e:
             self._error = str(e)

@@ -1,6 +1,7 @@
 import os
 import queue
 import threading
+import time
 
 import pyperclip
 import rumps
@@ -8,12 +9,40 @@ from pynput import keyboard
 
 from . import config as cfg
 from . import history as hist
+from . import inserter as ins
 from . import log as log_mod
 from . import recorder
 from . import transcriber
 from . import waveform
 
 logger = log_mod.get_logger()
+
+
+def _app_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("thistelles")
+    except Exception:
+        return "?"
+
+
+def _mic_permission() -> str:
+    """返回 granted / not_determined / denied / restricted / unknown。"""
+    try:
+        from AVFoundation import AVMediaTypeAudio, AVCaptureDevice
+
+        status = int(
+            AVCaptureDevice.authorizationStatusForMediaType_(AVMediaTypeAudio)
+        )
+        return {
+            0: "not_determined",
+            1: "authorized",
+            2: "denied",
+            3: "restricted",
+        }.get(status, "unknown")
+    except Exception:
+        return "unknown"
 
 
 def notify(title: str, subtitle: str, message: str):
@@ -61,8 +90,16 @@ def _play_sound(name: str):
 
 
 LANGUAGES = [
+    ("auto", "Auto"),
     ("zh-CN", "中文"),
     ("en-US", "English"),
+    ("ja", "日本語"),
+    ("ko", "한국어"),
+    ("de", "Deutsch"),
+    ("fr", "Français"),
+    ("es", "Español"),
+    ("ru", "Русский"),
+    ("pt", "Português"),
 ]
 
 HISTORY_LIMITS = [50, 100, 200]
@@ -72,19 +109,56 @@ UI_STRINGS = {
     "zh-CN": {
         "start": "开始录音",
         "stop": "停止录音",
+        "transcribing": "转写中…",
         "settings": "配置",
         "history": "历史记录",
+        "history_search": "搜索历史…",
+        "history_pin": "📌 序号置顶/取消…",
+        "history_export": "导出历史…",
+        "history_clear_search": "✕ 显示全部",
+        "history_no_match": "无匹配结果",
+        "dlg_ok": "确定",
+        "dlg_cancel": "取消",
+        "dlg_search_prompt": "输入关键词过滤历史记录：",
+        "dlg_pin_prompt": "输入列表序号，置顶/取消置顶该条：",
+        "notify_pinned": "已置顶",
+        "notify_unpinned": "已取消置顶",
+        "notify_export_done": "已导出 {} 条",
+        "notify_invalid_index": "无效序号",
+        "github_repo": "⭐ GitHub 仓库",
+        "perm_check_title": "权限提示",
+        "perm_missing_ax": "辅助功能权限未授权，全局快捷键不可用。系统设置 → 隐私与安全性 → 辅助功能",
+        "perm_missing_mic": "麦克风权限被拒绝，无法录音。系统设置 → 隐私与安全性 → 麦克风",
+        "mic_device": "麦克风设备",
+        "mic_default": "系统默认",
         "language": "切换语言",
         "mode": "精度模式",
         "base": "标准",
         "max": "高精度",
         "limit": "历史上限",
+        "output": "输出方式",
+        "out_paste": "插入光标处",
+        "out_both": "插入并保留剪贴板",
+        "out_clipboard": "仅复制剪贴板",
+        "keymode": "按键模式",
+        "km_toggle": "点击切换",
+        "km_ptt": "按住说话",
         "no_history": "暂无记录",
         "clear_history": "清空历史",
         "quit": "退出",
+        "cancel": "取消",
+        "cancel_recording": "取消录音",
+        "cancel_transcribing": "取消转写",
+        "edit_hotwords": "编辑热词…",
+        "set_hotkey": "设置快捷键…",
+        "hotkey_updated": "快捷键已更新: {}",
+        "press_hotkey": "请按下新的快捷键组合",
         "notify_title": "语音输入",
+        "notify_busy": "上一段还在转写中，请稍候",
         "notify_copied": "已复制到剪贴板",
+        "notify_pasted": "已插入到光标处",
         "notify_fail": "未识别到语音",
+        "notify_cancelled": "已取消",
         "notify_retry": "请重试",
         "notify_model_error": "模型加载失败，请重新安装或切换为标准模式",
         "notify_inference_error": "转写出错，请重试",
@@ -94,19 +168,56 @@ UI_STRINGS = {
     "en-US": {
         "start": "Start Recording",
         "stop": "Stop Recording",
+        "transcribing": "Transcribing…",
         "settings": "Settings",
         "history": "History",
+        "history_search": "Search History…",
+        "history_pin": "📌 Pin/Unpin by #…",
+        "history_export": "Export History…",
+        "history_clear_search": "✕ Show All",
+        "history_no_match": "No Matches",
+        "dlg_ok": "OK",
+        "dlg_cancel": "Cancel",
+        "dlg_search_prompt": "Keyword to filter history:",
+        "dlg_pin_prompt": "Entry number from the list above to pin/unpin:",
+        "notify_pinned": "Pinned",
+        "notify_unpinned": "Unpinned",
+        "notify_export_done": "Exported {} entries",
+        "notify_invalid_index": "Invalid number",
+        "github_repo": "⭐ GitHub Repository",
+        "perm_check_title": "Permissions",
+        "perm_missing_ax": "Accessibility permission missing — hotkeys disabled. System Settings → Privacy & Security → Accessibility",
+        "perm_missing_mic": "Microphone permission denied — recording unavailable. System Settings → Privacy & Security → Microphone",
+        "mic_device": "Microphone",
+        "mic_default": "System Default",
         "language": "Language",
         "mode": "Mode",
         "base": "Base",
         "max": "Max",
         "limit": "History Limit",
+        "output": "Output Mode",
+        "out_paste": "Insert at Cursor",
+        "out_both": "Insert & Keep Clipboard",
+        "out_clipboard": "Copy Only",
+        "keymode": "Key Mode",
+        "km_toggle": "Click Toggle",
+        "km_ptt": "Hold to Talk",
         "no_history": "No Records",
         "clear_history": "Clear History",
         "quit": "Quit",
+        "cancel": "Cancel",
+        "cancel_recording": "Cancel Recording",
+        "cancel_transcribing": "Cancel Transcription",
+        "edit_hotwords": "Edit Hotwords…",
+        "set_hotkey": "Set Shortcut…",
+        "hotkey_updated": "Shortcut updated: {}",
+        "press_hotkey": "Press new shortcut combination",
         "notify_title": "Thistelles",
+        "notify_busy": "Still transcribing previous clip, please wait",
         "notify_copied": "Copied to Clipboard",
+        "notify_pasted": "Inserted at Cursor",
         "notify_fail": "No Speech Detected",
+        "notify_cancelled": "Cancelled",
         "notify_retry": "Please try again",
         "notify_model_error": "Model load failed. Reinstall or switch to Base mode.",
         "notify_inference_error": "Transcription failed. Please retry.",
@@ -116,9 +227,52 @@ UI_STRINGS = {
 }
 
 
+class _ComboListener(keyboard.Listener):
+    """Fires on full-combo press and release; enables push-to-talk."""
+
+    def __init__(self, combo_str: str, press_cb, release_cb=None, **kwargs):
+        self._combo = frozenset(keyboard.HotKey.parse(combo_str))
+        self._held: set = set()
+        self._armed = False
+        self._press_cb = press_cb
+        self._release_cb = release_cb
+        super().__init__(
+            on_press=self._on_key_press,
+            on_release=self._on_key_release,
+            **kwargs,
+        )
+
+    def _on_key_press(self, key, injected):
+        if injected:
+            return
+        k = self.canonical(key)
+        if k in self._combo and k not in self._held:
+            self._held.add(k)
+            if self._held == self._combo and not self._armed:
+                self._armed = True
+                self._press_cb()
+
+    def _on_key_release(self, key, injected):
+        if injected:
+            return
+        k = self.canonical(key)
+        if k in self._held:
+            self._held.discard(k)
+            if self._armed and self._held != self._combo:
+                self._armed = False
+                if self._release_cb:
+                    self._release_cb()
+
+
 class VoiceInputApp(rumps.App):
     def __init__(self):
         self._toggling = False
+        self._transcribing = False
+        self._last_text = ""
+        self._cancel_event: threading.Event | None = None
+        self._silence_since: float | None = None
+        self._sleep_assertion = None
+        self._hotwords_file = os.path.expanduser("~/.voice-input/hotwords.txt")
 
         self._config = cfg.load()
         logger.info("config loaded: language=%s mode=%s hotkey=%s",
@@ -128,11 +282,15 @@ class VoiceInputApp(rumps.App):
 
         self._icon_idle = _asset_path("mic_idle.png")
         self._icon_rec = _asset_path("mic_rec.png")
+        transcriber.set_variant(self._config.get("model_variant", "fp16"))
         super().__init__("", icon=self._icon_idle, template=True, quit_button=None)
         self._queue: queue.Queue = queue.Queue()
         self._recorder = recorder.Recorder()
         self._waveform = waveform.WaveformOverlay(self._config)
         self._hotkey_listener: keyboard.GlobalHotKeys | None = None
+        self._capturing = False
+        self._capture_mods: set[str] = set()
+        self._capture_listener: keyboard.Listener | None = None
 
         self._toggle_item = rumps.MenuItem(self._tr("start"))
         self._toggle_item.set_callback(self._on_toggle_clicked)
@@ -140,18 +298,56 @@ class VoiceInputApp(rumps.App):
         self._quit_item = rumps.MenuItem(self._tr("quit"))
         self._quit_item.set_callback(lambda _: rumps.quit_application())
 
+        self._github_item = rumps.MenuItem(self._tr("github_repo"))
+        self._github_item.set_callback(self._on_open_github)
+
+        self._mic_menu = rumps.MenuItem(self._tr("mic_device"))
+        self._mic_items: dict[str, rumps.MenuItem] = {}
+
         self._history_menu = rumps.MenuItem(self._tr("history"))
+        self._history_query: str | None = None
+        self._history_rows: list[dict] = []
+        self._history_search_item = rumps.MenuItem(self._tr("history_search"))
+        self._history_search_item.set_callback(self._on_history_search)
+        self._history_pin_item = rumps.MenuItem(self._tr("history_pin"))
+        self._history_pin_item.set_callback(self._on_history_pin_dialog)
+        self._history_export_item = rumps.MenuItem(self._tr("history_export"))
+        self._history_export_item.set_callback(self._on_history_export)
+        self._dialog_pending = False
         self._language_menu = rumps.MenuItem(self._tr("language"))
         self._lang_items: dict[str, rumps.MenuItem] = {}
         self._mode_menu = rumps.MenuItem(self._tr("mode"))
         self._mode_items: dict[str, rumps.MenuItem] = {}
         self._limit_menu = rumps.MenuItem(self._tr("limit"))
         self._limit_items: dict[int, rumps.MenuItem] = {}
+        self._output_menu = rumps.MenuItem(self._tr("output"))
+        self._output_items: dict[str, rumps.MenuItem] = {}
+        self._keymode_menu = rumps.MenuItem(self._tr("keymode"))
+        self._keymode_items: dict[str, rumps.MenuItem] = {}
+
+        self._cancel_item = rumps.MenuItem(self._tr("cancel"))
+        self._cancel_item.set_callback(self._on_cancel)
+
+        self._hotwords_item = rumps.MenuItem(self._tr("edit_hotwords"))
+        self._hotwords_item.set_callback(self._on_edit_hotwords)
+
+        self._set_hotkey_item = rumps.MenuItem(self._tr("set_hotkey"))
+        self._set_hotkey_item.set_callback(self._on_set_hotkey)
 
         self._settings_menu = rumps.MenuItem(self._tr("settings"))
+        self._settings_menu.add(self._cancel_item)
+        self._settings_menu.add(None)
+        self._settings_menu.add(self._hotwords_item)
+        self._settings_menu.add(self._set_hotkey_item)
         self._settings_menu.add(self._mode_menu)
+        self._settings_menu.add(self._output_menu)
+        self._settings_menu.add(self._keymode_menu)
         self._settings_menu.add(self._language_menu)
         self._settings_menu.add(self._limit_menu)
+        self._settings_menu.add(None)
+        version_item = rumps.MenuItem(f"v{_app_version()}")
+        version_item.set_callback(None)  # 置灰：仅展示当前运行版本
+        self._settings_menu.add(version_item)
 
         self.menu = [
             self._toggle_item,
@@ -159,28 +355,39 @@ class VoiceInputApp(rumps.App):
             self._history_menu,
             self._settings_menu,
             None,
+            self._github_item,
+            None,
             self._quit_item,
         ]
 
         self._setup_language()
         self._setup_limit()
         self._setup_mode()
+        self._setup_output()
+        self._setup_keymode()
+        self._setup_mic_menu()
         self._refresh_ui()
         self._rebuild_history()
-        self._start_hotkey()
         self._timer_amp = None
+        t = threading.Timer(1.0, self._start_hotkey)
+        t.daemon = True
+        t.start()
+        self._check_permissions_async()
         self._timer = rumps.Timer(self._poll_queue, 0.1)
         self._timer.start()
         logger.info("app: ready")
 
         threading.Thread(
             target=self._preload_model,
-            args=(self._config.get("mode", "base"),),
+            args=(
+                self._config.get("mode", "base"),
+                float(self._config.get("model_idle_unload_min", 30) or 0),
+            ),
             daemon=True,
         ).start()
 
-    def _preload_model(self, mode: str):
-        transcriber.preload(mode)
+    def _preload_model(self, mode: str, idle_unload_min: float = 0.0):
+        transcriber.preload(mode, idle_unload_min)
 
     def _tr(self, key: str) -> str:
         lang = self._config.get("language", "zh-CN")
@@ -200,24 +407,221 @@ class VoiceInputApp(rumps.App):
         return "+".join(result)
 
     def _start_hotkey(self):
-        hotkey_str = self._to_pynput_hotkey(self._config["hotkey"])
-        logger.info("hotkey: registering %s", self._config["hotkey"])
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
+
+        try:
+            hotkey_str = self._to_pynput_hotkey(self._config["hotkey"])
+        except Exception:
+            logger.exception("hotkey: invalid config, using default")
+            self._config["hotkey"] = self._config.get("hotkey", "cmd+shift+i")
+            hotkey_str = self._to_pynput_hotkey(self._config["hotkey"])
+
+        mode = self._config.get("hotkey_mode", "toggle")
+        logger.info("hotkey: registering %s (mode=%s)", self._config["hotkey"], mode)
 
         def on_activate():
             self._queue.put(("toggle", None))
+
+        def build():
+            if mode == "ptt":
+                def on_down():
+                    self._queue.put(("ptt_down", None))
+
+                def on_up():
+                    self._queue.put(("ptt_up", None))
+
+                return _ComboListener(hotkey_str, on_down, on_up)
+            return keyboard.GlobalHotKeys({hotkey_str: on_activate})
 
         devnull = os.open(os.devnull, os.O_WRONLY)
         old_stderr = os.dup(2)
         os.dup2(devnull, 2)
         os.close(devnull)
         try:
-            self._hotkey_listener = keyboard.GlobalHotKeys({hotkey_str: on_activate})
+            self._hotkey_listener = build()
+        except Exception:
+            logger.exception("hotkey: failed to register")
+            self._hotkey_listener = None
+            return
         finally:
             os.dup2(old_stderr, 2)
             os.close(old_stderr)
         self._hotkey_listener.daemon = True
         self._hotkey_listener.start()
-        logger.info("hotkey: ready")
+        logger.info("hotkey: ready (%s)", self._config["hotkey"])
+
+    # ── hotkey capture ──────────────────────────────────────────────
+
+    def _on_set_hotkey(self, _):
+        if self._capturing:
+            self._capturing = False
+            if self._capture_listener:
+                try:
+                    self._capture_listener.stop()
+                except Exception:
+                    pass
+                self._capture_listener = None
+            self._capture_mods.clear()
+            self._start_hotkey()
+            return
+        self._capturing = True
+
+        if self._hotkey_listener:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
+
+        notify(self._tr("notify_title"), self._tr("press_hotkey"), "")
+
+        self._capture_mods.clear()
+
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        old_stderr = os.dup(2)
+        os.dup2(devnull, 2)
+        os.close(devnull)
+        try:
+            def on_press(key):
+                if not self._capturing:
+                    return False
+                try:
+                    if isinstance(key, keyboard.Key):
+                        if key in (keyboard.Key.cmd, keyboard.Key.cmd_r):
+                            self._capture_mods.add("cmd")
+                        elif key in (keyboard.Key.shift, keyboard.Key.shift_r):
+                            self._capture_mods.add("shift")
+                        elif key in (keyboard.Key.ctrl, keyboard.Key.ctrl_r):
+                            self._capture_mods.add("ctrl")
+                        elif key in (keyboard.Key.alt, keyboard.Key.alt_r):
+                            self._capture_mods.add("alt")
+                        elif self._capture_mods:
+                            self._finish_capture(key.name)
+                            return False
+                    elif self._capture_mods:
+                        char = key.char
+                        if char:
+                            if "shift" in self._capture_mods and char.isalpha():
+                                char = char.lower()
+                            self._finish_capture(char)
+                            return False
+                except Exception:
+                    pass
+                return True
+
+            self._capture_listener = keyboard.Listener(on_press=on_press)
+        finally:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)
+        self._capture_listener.daemon = True
+        self._capture_listener.start()
+
+    def _finish_capture(self, key_name: str):
+        self._capturing = False
+        if self._capture_listener:
+            try:
+                self._capture_listener.stop()
+            except Exception:
+                pass
+            self._capture_listener = None
+
+        mod_order = ["cmd", "ctrl", "alt", "shift", "option"]
+        mods = sorted(self._capture_mods, key=lambda m: mod_order.index(m) if m in mod_order else len(mod_order))
+        hotkey = "+".join(mods + [key_name])
+        self._queue.put(("set_hotkey", hotkey))
+
+    # ── cancel ──────────────────────────────────────────────────────
+
+    def _refresh_cancel(self):
+        if self._recorder.recording:
+            self._cancel_item.title = self._tr("cancel_recording")
+            self._cancel_item.set_callback(self._on_cancel)
+        elif self._transcribing:
+            self._cancel_item.title = self._tr("cancel_transcribing")
+            self._cancel_item.set_callback(self._on_cancel)
+        else:
+            self._cancel_item.title = self._tr("cancel")
+            self._cancel_item.set_callback(None)
+
+    def _on_cancel(self, _):
+        if self._recorder.recording:
+            self._cancel_recording()
+        elif self._transcribing and self._cancel_event:
+            logger.info("cancel: transcription requested")
+            self._cancel_event.set()
+
+    def _cancel_recording(self):
+        logger.info("cancel: recording discarded")
+        self._silence_since = None
+        self._end_sleep_assertion()
+        if self._timer_amp:
+            self._timer_amp.stop()
+            self._timer_amp = None
+        self._waveform.hide()
+        self.icon = self._icon_idle
+        self._toggle_item.title = self._tr("start")
+        wav_path = self._recorder.stop()
+        if wav_path:
+            try:
+                os.unlink(wav_path)
+            except Exception:
+                pass
+        _play_sound("stop")
+        self._update_cancel_state()
+
+    def _update_cancel_state(self):
+        self._refresh_cancel()
+
+    # ── hotwords ────────────────────────────────────────────────────
+
+    def _load_hotwords(self) -> str:
+        try:
+            with open(self._hotwords_file, encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f]
+            words = " ".join(ln for ln in lines if ln and not ln.startswith("#"))
+            return words.strip()
+        except FileNotFoundError:
+            return ""
+        except Exception:
+            logger.exception("hotwords: read failed")
+            return ""
+
+    def _build_prompt(self) -> str | None:
+        parts: list[str] = []
+        hotwords = self._load_hotwords()
+        if hotwords:
+            parts.append(hotwords)
+        if self._config.get("context_prompt", True) and self._last_text:
+            parts.append(self._last_text[-80:])
+        prompt = " ".join(parts).strip()
+        return prompt[:220] or None
+
+    def _ensure_hotwords_file(self):
+        if os.path.exists(self._hotwords_file):
+            return
+        template = (
+            "# 每行一个热词：人名、产品名、专有名词等。\n"
+            "# 以 # 开头的行是注释。保存后下一段录音立即生效，无需重启。\n"
+            "#\n"
+            "# 示例：\n"
+            "# Thistelles\n"
+        )
+        try:
+            os.makedirs(os.path.dirname(self._hotwords_file), exist_ok=True)
+            with open(self._hotwords_file, "w", encoding="utf-8") as f:
+                f.write(template)
+        except Exception:
+            logger.exception("hotwords: write template failed")
+
+    def _on_edit_hotwords(self, _):
+        self._ensure_hotwords_file()
+        import subprocess
+        subprocess.Popen(["open", self._hotwords_file])
 
     # ── queue poll (main thread) ────────────────────────────────────
 
@@ -230,11 +634,61 @@ class VoiceInputApp(rumps.App):
         if action == "toggle":
             self._toggle()
 
+        elif action == "ptt_down":
+            if self._transcribing:
+                notify(self._tr("notify_title"), self._tr("notify_busy"), "")
+            elif not self._recorder.recording:
+                self._start()
+
+        elif action == "ptt_up":
+            if self._recorder.recording:
+                self._stop()
+
+        elif action == "auto_stop":
+            if self._recorder.recording:
+                logger.info("recording: auto stop (%s)", data)
+                self._stop()
+
+        elif action == "dialog_result":
+            payload = data or {}
+            value = payload.get("value")
+            kind = payload.get("kind")
+            self._dialog_pending = False
+            if value is None:
+                return  # 用户取消
+            if kind == "history_search":
+                self._history_query = value.strip() or None
+                self._rebuild_history()
+            elif kind == "history_pin":
+                try:
+                    idx = int(value.strip().lstrip("#"))
+                except ValueError:
+                    idx = 0
+                # 使用开框时的列表快照，避免等待输入期间列表刷新导致序号错位
+                self._apply_pin_index(idx, payload.get("rows") or [])
+
         elif action == "notify_ok":
             _play_sound("stop")
             preview = (data[:60] + "…") if data and len(data) > 60 else (data or "")
             notify(self._tr("notify_title"), self._tr("notify_copied"), preview)
+            if self._history_query:
+                self._history_query = None  # 新记录可能不在过滤结果内，避免"消失"
             self._rebuild_history()
+
+        elif action == "notify_pasted":
+            _play_sound("stop")
+            preview = (data[:60] + "…") if data and len(data) > 60 else (data or "")
+            notify(self._tr("notify_title"), self._tr("notify_pasted"), preview)
+            if self._history_query:
+                self._history_query = None
+            self._rebuild_history()
+
+        elif action == "notify_perm":
+            notify(
+                self._tr("perm_check_title"),
+                self._tr(data),
+                "",
+            )
 
         elif action == "notify_fail":
             _play_sound("stop")
@@ -248,11 +702,58 @@ class VoiceInputApp(rumps.App):
             _play_sound("stop")
             notify(self._tr("notify_title"), self._tr("notify_inference_error"), "")
 
+        elif action == "set_hotkey":
+            self._config["hotkey"] = data
+            cfg.save(self._config)
+            self._start_hotkey()
+            notify(self._tr("notify_title"), self._tr("hotkey_updated").format(data), "")
+
+        elif action == "transcribe_done":
+            self._transcribing = False
+            if not self._recorder.recording:
+                self._toggle_item.title = self._tr("start")
+            self._refresh_cancel()
+
+        elif action == "notify_cancelled":
+            _play_sound("stop")
+            notify(self._tr("notify_title"), self._tr("notify_cancelled"), "")
+
     # ── waveform ───────────────────────────────────────────────────
 
+    _AUTO_STOP_SILENCE_RMS = 0.02  # recorder 的 RMS 已归一化放大，0.02 ≈ 安静环境底噪
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        s = int(seconds)
+        return f"{s // 60}:{s % 60:02d}"
+
     def _poll_amplitude(self, _):
-        if self._recorder.recording:
-            self._waveform.update(self._recorder.latest_amplitude)
+        if not self._recorder.recording:
+            return
+        amp = self._recorder.latest_amplitude
+        elapsed = self._recorder.elapsed_seconds
+        self._waveform.update(amp, self._format_elapsed(elapsed))
+
+        max_s = int(self._config.get("max_record_s", 600) or 0)
+        if max_s > 0 and elapsed >= max_s:
+            logger.info("recording: max duration reached (%ds), stopping", max_s)
+            self._queue.put(("auto_stop", "max_duration"))
+            return
+
+        silence_limit = float(self._config.get("auto_stop_silence_s", 0) or 0)
+        if silence_limit > 0:
+            now = time.monotonic()
+            if amp < self._AUTO_STOP_SILENCE_RMS:
+                if self._silence_since is None:
+                    self._silence_since = now
+                elif now - self._silence_since >= silence_limit:
+                    self._silence_since = None
+                    logger.info(
+                        "recording: silence auto-stop after %.1fs", silence_limit
+                    )
+                    self._queue.put(("auto_stop", "silence"))
+            else:
+                self._silence_since = None
 
     # ── recording toggle ────────────────────────────────────────────
 
@@ -261,6 +762,9 @@ class VoiceInputApp(rumps.App):
 
     def _toggle(self):
         if self._toggling:
+            return
+        if not self._recorder.recording and self._transcribing:
+            notify(self._tr("notify_title"), self._tr("notify_busy"), "")
             return
         self._toggling = True
         try:
@@ -271,18 +775,50 @@ class VoiceInputApp(rumps.App):
         finally:
             self._toggling = False
 
+    def _begin_sleep_assertion(self):
+        # 录音期间阻止系统空闲休眠（显示器仍可关闭）
+        if self._sleep_assertion is not None:
+            return
+        try:
+            from AppKit import NSProcessInfo
+
+            NSIdleSystemSleepDisabled = 1 << 20
+            self._sleep_assertion = (
+                NSProcessInfo.processInfo().beginActivityWithOptions_reason_(
+                    NSIdleSystemSleepDisabled, "Thistelles recording"
+                )
+            )
+        except Exception:
+            self._sleep_assertion = None
+            logger.debug("sleep assertion: begin failed", exc_info=True)
+
+    def _end_sleep_assertion(self):
+        if self._sleep_assertion is None:
+            return
+        try:
+            from AppKit import NSProcessInfo
+
+            NSProcessInfo.processInfo().endActivity_(self._sleep_assertion)
+        except Exception:
+            logger.debug("sleep assertion: end failed", exc_info=True)
+        self._sleep_assertion = None
+
     def _start(self):
         logger.info("recording: start")
+        self._silence_since = None
+        self._begin_sleep_assertion()
         self._waveform.show()
         self._recorder.start()
         self._timer_amp = rumps.Timer(self._poll_amplitude, 0.03)
         self._timer_amp.start()
         self.icon = self._icon_rec
         self._toggle_item.title = self._tr("stop")
+        self._refresh_cancel()
         _play_sound("start")
 
     def _stop(self):
         logger.info("recording: stop")
+        self._end_sleep_assertion()
         if self._timer_amp:
             self._timer_amp.stop()
             self._timer_amp = None
@@ -295,6 +831,10 @@ class VoiceInputApp(rumps.App):
             notify(self._tr("notify_title"), self._tr("notify_fail"), self._tr("notify_retry"))
             return
 
+        self._transcribing = True
+        self._toggle_item.title = self._tr("transcribing")
+        self._cancel_event = threading.Event()
+        self._refresh_cancel()
         threading.Thread(
             target=self._transcribe_async, args=(wav_path,), daemon=True
         ).start()
@@ -303,56 +843,268 @@ class VoiceInputApp(rumps.App):
         lang = self._config["language"]
         mode = self._config.get("mode", "base")
         logger.info("transcribe: starting mode=%s lang=%s", mode, lang)
-        text, err = transcriber.transcribe(
-            wav_path,
-            lang,
-            mode,
-            5,
-        )
         try:
-            os.unlink(wav_path)
+            text, err = transcriber.transcribe(
+                wav_path,
+                lang,
+                mode,
+                initial_prompt=self._build_prompt(),
+                cancel_event=self._cancel_event,
+                idle_unload_min=float(
+                    self._config.get("model_idle_unload_min", 30) or 0
+                ),
+            )
+            try:
+                os.unlink(wav_path)
+            except Exception:
+                pass
+            if err == "cancelled":
+                logger.info("transcribe: cancelled")
+                self._queue.put(("notify_cancelled", None))
+                return
+            if err == "model_error":
+                logger.error("transcribe: model error")
+                self._queue.put(("notify_model_error", None))
+                return
+            if err == "inference_error":
+                logger.error("transcribe: inference error")
+                self._queue.put(("notify_inference_error", None))
+                return
+            if not text:
+                logger.warning("transcribe: no speech detected")
+                self._queue.put(("notify_fail", None))
+                return
+            hist.add(text, self._config["history_limit"])
+            self._last_text = text
+            logger.info("transcribe: done (%d chars) %s", len(text), text[:60])
+            mode = self._config.get("output_mode", "paste")
+            delay = int(self._config.get("paste_delay_ms", 120))
+            pasted, eff_mode = ins.deliver(text, mode, delay)
+            if eff_mode == "paste":
+                self._queue.put(("notify_pasted", text))
+            else:
+                self._queue.put(("notify_ok", text))
         except Exception:
-            pass
-        if err == "model_error":
-            logger.error("transcribe: model error")
-            self._queue.put(("notify_model_error", None))
-            return
-        if err == "inference_error":
-            logger.error("transcribe: inference error")
+            logger.exception("transcribe: unexpected error")
             self._queue.put(("notify_inference_error", None))
-            return
-        if not text:
-            logger.warning("transcribe: no speech detected")
-            self._queue.put(("notify_fail", None))
-            return
-        pyperclip.copy(text)
-        hist.add(text, self._config["history_limit"])
-        logger.info("transcribe: done (%d chars) %s", len(text), text[:60])
-        self._queue.put(("notify_ok", text))
+        finally:
+            self._queue.put(("transcribe_done", None))
 
     # ── history ─────────────────────────────────────────────────────
 
     def _rebuild_history(self):
         if self._history_menu._menu:
             self._history_menu.clear()
-        entries = hist.load()
-        if not entries:
-            self._history_menu.add(rumps.MenuItem(self._tr("no_history")))
-            return
-        for e in entries[:15]:
-            label = f"{e['time']}  {e['text'][:28]}"
-            item = rumps.MenuItem(label)
+
+        self._history_menu.add(self._history_search_item)
+        self._history_pin_item.title = self._tr("history_pin")
+        self._history_menu.add(self._history_pin_item)
+        self._history_export_item.title = self._tr("history_export")
+        self._history_menu.add(self._history_export_item)
+
+        query = (self._history_query or "").strip().lower()
+        rows = hist.ordered()
+        if query:
+            q_item = rumps.MenuItem(
+                self._tr("dlg_search_prompt") + " " + self._history_query
+            )
+            self._history_menu.add(q_item)
+            clear_item = rumps.MenuItem(self._tr("history_clear_search"))
+            clear_item.set_callback(lambda _: self._clear_history_search())
+            self._history_menu.add(clear_item)
+            rows = [e for e in rows if query in e.get("text", "").lower()]
+        self._history_rows = rows
+
+        if not rows:
+            empty = rumps.MenuItem(
+                self._tr("history_no_match") if query else self._tr("no_history")
+            )
+            self._history_menu.add(empty)
+        for i, e in enumerate(rows, 1):
+            mark = "📌 " if e.get("pinned") else ""
+            label = f"{mark}{i}. {e['time']}  {e['text'][:28]}"
             t = e["text"]
+            item = rumps.MenuItem(label)
             item.set_callback(lambda _, text=t: pyperclip.copy(text))
+            mi = getattr(item, "_menuitem", None)
+            if mi is not None:
+                try:
+                    mi.setToolTip_(t)  # 悬浮查看完整文本
+                except Exception:
+                    pass
             self._history_menu.add(item)
+
         self._history_menu.add(None)
         clear_item = rumps.MenuItem(self._tr("clear_history"))
         clear_item.set_callback(self._on_clear_history)
         self._history_menu.add(clear_item)
 
+    def _clear_history_search(self, _):
+        self._history_query = None
+        self._rebuild_history()
+
+    @staticmethod
+    def _osascript_escape(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _prompt_text(self, message: str) -> str | None:
+        """模态输入框；返回输入文本，取消返回 None。"""
+        import subprocess
+
+        script = (
+            'display dialog "{}" default answer "" '
+            'buttons {{"{}", "{}"}} default button "{}" with title "Thistelles"'
+        ).format(
+            self._osascript_escape(message),
+            self._tr("dlg_cancel"),
+            self._tr("dlg_ok"),
+            self._tr("dlg_ok"),
+        )
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
+        if r.returncode != 0:
+            return None
+        for part in r.stdout.strip().split(","):
+            part = part.strip()
+            if part.startswith("text returned:"):
+                return part[len("text returned:"):]
+        return ""
+
+    def _prompt_text_async(self, message: str, kind: str, payload: dict | None = None):
+        """后台线程弹出输入框，结果经队列回主线程处理。
+
+        osascript display dialog 会阻塞到用户响应；若在主线程同步等待，
+        NSApplication 事件循环停摆导致菜单/快捷键全部假死。
+        """
+        if self._dialog_pending:
+            return
+
+        def worker():
+            result = self._prompt_text(message)
+            data = {"kind": kind, "value": result}
+            if payload:
+                data.update(payload)
+            self._queue.put(("dialog_result", data))
+
+        self._dialog_pending = True
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_history_search(self, _):
+        self._prompt_text_async(self._tr("dlg_search_prompt"), "history_search")
+
+    def _on_history_pin_dialog(self, _):
+        # 快照当前列表：等待输入期间列表可能因新录音刷新
+        snapshot = [dict(e) for e in self._history_rows]
+        self._prompt_text_async(
+            self._tr("dlg_pin_prompt"), "history_pin", {"rows": snapshot}
+        )
+        try:
+            idx = int(raw.strip().lstrip("#"))
+        except ValueError:
+            idx = 0
+        if not 1 <= idx <= len(self._history_rows):
+            notify(self._tr("notify_title"), self._tr("notify_invalid_index"), "")
+            return
+        self._apply_pin_index(idx)
+
+    def _apply_pin_index(self, idx: int, rows: list[dict] | None = None):
+        rows = self._history_rows if rows is None else rows
+        if not 1 <= idx <= len(rows):
+            notify(self._tr("notify_title"), self._tr("notify_invalid_index"), "")
+            return
+        text = rows[idx - 1]["text"]
+        state = hist.toggle_pin(text)
+        key = "notify_pinned" if state else "notify_unpinned"
+        preview = (text[:60] + "…") if len(text) > 60 else text
+        notify(self._tr("notify_title"), self._tr(key), preview)
+        self._rebuild_history()
+
+    def _on_history_export(self, _):
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        path = os.path.expanduser(f"~/Downloads/thistelles-history-{ts}.txt")
+        try:
+            count = hist.export_to(path)
+        except Exception:
+            logger.exception("history: export failed")
+            notify(self._tr("notify_title"), self._tr("notify_fail"), "")
+            return
+        try:
+            import subprocess
+
+            subprocess.Popen(["open", "-R", path])
+        except Exception:
+            pass
+        body = path.replace(os.path.expanduser("~"), "~")
+        notify(
+            self._tr("notify_title"),
+            self._tr("notify_export_done").format(count),
+            body,
+        )
+
     def _on_clear_history(self, _):
         hist.clear()
         self._rebuild_history()
+
+    # ── permissions & links ────────────────────────────────────────
+
+    def _on_open_github(self, _):
+        import webbrowser
+
+        webbrowser.open("https://github.com/emVisible/Thistelles")
+
+    def _check_permissions_async(self):
+        """启动后延迟检测权限状态，缺失时经队列提醒一次。"""
+        def worker():
+            problem = None
+            try:
+                if not ins.accessibility_trusted(prompt=False):
+                    problem = "perm_missing_ax"
+                elif _mic_permission() == "denied":
+                    problem = "perm_missing_mic"
+            except Exception:
+                logger.debug("perm: check failed", exc_info=True)
+            if problem:
+                self._queue.put(("notify_perm", problem))
+
+        threading.Timer(4.0, worker).start()
+
+    # ── microphone device ───────────────────────────────────────────
+
+    def _setup_mic_menu(self):
+        self._mic_items.clear()
+        devices = recorder.Recorder.enumerate_inputs()
+        current = (self._config.get("input_device_name") or "").strip()
+
+        default_item = rumps.MenuItem(self._tr("mic_default"))
+        default_item.set_callback(lambda _, name="": self._set_input_device(name))
+        self._mic_menu.add(default_item)
+        self._mic_items[""] = default_item
+
+        for dev in devices[:12]:  # 菜单长度约束：至多 12 个物理设备
+            label = dev["name"] or f"device #{dev['index']}"
+            if len(label) > 34:
+                label = label[:32] + "…"
+            item = rumps.MenuItem(label)
+            item.set_callback(
+                lambda _, name=dev["name"]: self._set_input_device(name)
+            )
+            self._mic_menu.add(item)
+            self._mic_items[dev["name"]] = item
+        self._refresh_mic_state()
+        # 启动时应用已保存的设备偏好（下次录音生效）
+        if current:
+            self._recorder.set_device_by_name(current)
+
+    def _refresh_mic_state(self):
+        current = (self._config.get("input_device_name") or "").strip()
+        for name, item in self._mic_items.items():
+            item.state = name.strip().lower() == current.lower()
+
+    def _set_input_device(self, name: str):
+        logger.info("input device: %r", name)
+        self._config["input_device_name"] = name
+        cfg.save(self._config)
+        self._recorder.set_device_by_name(name)
+        self._refresh_mic_state()
 
     # ── language ────────────────────────────────────────────────────
 
@@ -425,24 +1177,94 @@ class VoiceInputApp(rumps.App):
         cfg.save(self._config)
         self._refresh_mode_state()
 
+    # ── output mode ─────────────────────────────────────────────────
+
+    _OUTPUT_LABELS = {"paste": "out_paste", "both": "out_both", "clipboard": "out_clipboard"}
+
+    def _setup_output(self):
+        self._output_items.clear()
+        for m in cfg.OUTPUT_MODES:
+            item = rumps.MenuItem(self._tr(self._OUTPUT_LABELS[m]))
+            item.set_callback(lambda _, mode=m: self._set_output(mode))
+            self._output_menu.add(item)
+            self._output_items[m] = item
+        self._refresh_output_state()
+
+    def _refresh_output_state(self):
+        current = self._config.get("output_mode", "paste")
+        for m, item in self._output_items.items():
+            item.state = m == current
+
+    def _set_output(self, mode: str):
+        logger.info("output: %s -> %s", self._config.get("output_mode"), mode)
+        self._config["output_mode"] = mode
+        cfg.save(self._config)
+        self._refresh_output_state()
+
+    # ── key mode ────────────────────────────────────────────────────
+
+    _KEYMODE_LABELS = {"toggle": "km_toggle", "ptt": "km_ptt"}
+
+    def _setup_keymode(self):
+        self._keymode_items.clear()
+        for m in cfg.HOTKEY_MODES:
+            item = rumps.MenuItem(self._tr(self._KEYMODE_LABELS[m]))
+            item.set_callback(lambda _, mode=m: self._set_keymode(mode))
+            self._keymode_menu.add(item)
+            self._keymode_items[m] = item
+        self._refresh_keymode_state()
+
+    def _refresh_keymode_state(self):
+        current = self._config.get("hotkey_mode", "toggle")
+        for m, item in self._keymode_items.items():
+            item.state = m == current
+
+    def _set_keymode(self, mode: str):
+        logger.info("keymode: %s -> %s", self._config.get("hotkey_mode"), mode)
+        self._config["hotkey_mode"] = mode
+        cfg.save(self._config)
+        self._refresh_keymode_state()
+        self._start_hotkey()
+
     # ── UI refresh ──────────────────────────────────────────────────
 
     def _refresh_ui(self):
-        self._toggle_item.title = self._tr("stop") if self._recorder.recording else self._tr("start")
+        if self._recorder.recording:
+            self._toggle_item.title = self._tr("stop")
+        elif self._transcribing:
+            self._toggle_item.title = self._tr("transcribing")
+        else:
+            self._toggle_item.title = self._tr("start")
         self._settings_menu.title = self._tr("settings")
         self._history_menu.title = self._tr("history")
+        self._history_search_item.title = self._tr("history_search")
+        self._history_export_item.title = self._tr("history_export")
         self._language_menu.title = self._tr("language")
         self._mode_menu.title = self._tr("mode")
         self._limit_menu.title = self._tr("limit")
+        self._output_menu.title = self._tr("output")
+        for m, item in self._output_items.items():
+            item.title = self._tr(self._OUTPUT_LABELS[m])
+        self._keymode_menu.title = self._tr("keymode")
+        for m, item in self._keymode_items.items():
+            item.title = self._tr(self._KEYMODE_LABELS[m])
+        self._mic_menu.title = self._tr("mic_device")
+        self._set_hotkey_item.title = self._tr("set_hotkey")
+        self._hotwords_item.title = self._tr("edit_hotwords")
         self._quit_item.title = self._tr("quit")
         self._refresh_language_state()
         self._refresh_mode_state()
+        self._refresh_output_state()
+        self._refresh_keymode_state()
+        self._refresh_cancel()
 
     # ── cleanup ─────────────────────────────────────────────────────
 
     def _cleanup(self):
         if self._hotkey_listener:
             self._hotkey_listener.stop()
+        if self._capture_listener:
+            self._capture_listener.stop()
         self._waveform.hide()
 
 
@@ -455,9 +1277,26 @@ def main():
         except Exception:
             print("thistelles")
         return
-    app = VoiceInputApp()
+
+    import fcntl
+    os.makedirs(os.path.expanduser("~/.voice-input"), exist_ok=True)
+    lock_fh = open(os.path.expanduser("~/.voice-input/app.lock"), "w")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.warning("app: another instance is already running, exiting")
+        print("thistelles: another instance is already running", file=sys.stderr)
+        return
+
+    try:
+        app = VoiceInputApp()
+    except Exception:
+        logger.exception("app: failed to initialize")
+        sys.exit(1)
     try:
         app.run()
+    except Exception:
+        logger.exception("app: runtime error")
     finally:
         app._cleanup()
 

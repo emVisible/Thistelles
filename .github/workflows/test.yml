@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 测试只依赖纯逻辑模块：numpy 为唯一外部运行时依赖
+      - name: Install test dependencies
+        run: pip install numpy
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v

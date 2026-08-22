@@ -1,6 +1,6 @@
 [project]
 name = "thistelles"
-version = "0.1.0"
+version = "0.9.0"
 description = "macOS 全局快捷键语音输入 — 录音即转文字，直达剪贴板"
 authors = [
     { name = "Thistelles" },
@@ -13,7 +13,7 @@ dependencies = [
     "pynput>=1.7.6",
     "pyperclip>=1.8.2",
     "opencc-python-reimplemented>=0.1.7",
-    "faster-whisper>=1.1.0",
+    "mlx-whisper>=0.4.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -24,8 +24,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/young/thistelles"
-Repository = "https://github.com/young/thistelles"
+Homepage = "https://github.com/emVisible/Thistelles"
+Repository = "https://github.com/emVisible/Thistelles"
+Issues = "https://github.com/emVisible/Thistelles/issues"
 
 [project.scripts]
 thistelles = "thistelles.cli:entry"

@@ -4,12 +4,15 @@ from AppKit import (
     NSBackingStoreBuffered,
     NSBezierPath,
     NSColor,
+    NSFont,
+    NSEvent,
     NSRectFill,
     NSScreen,
     NSView,
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
+from Foundation import NSAttributedString
 
 
 THORN_COUNT = 32
@@ -21,6 +24,7 @@ class _ThornView(NSView):
         if self:
             self.amplitudes = [0.0] * THORN_COUNT
             self._smoothed = 0.0
+            self.elapsed_text = ""
         return self
 
     def _thorn_path_at(self, cx, baseline, half_w, height, lean):
@@ -92,6 +96,17 @@ class _ThornView(NSView):
         NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.05).set()
         vine_glow.stroke()
 
+        if self.elapsed_text:
+            attrs = {
+                "NSFont": NSFont.monospacedDigitSystemFontOfSize_weight_(11.0, 0.5),
+                "NSColor": NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.8),
+            }
+            text = NSAttributedString.alloc().initWithString_attributes_(
+                self.elapsed_text, attrs
+            )
+            size = text.size()
+            text.drawAtPoint_((w - size.width - 10, baseline + 4))
+
 
 class WaveformOverlay:
     def __init__(self, config: dict | None = None):
@@ -103,7 +118,7 @@ class WaveformOverlay:
     def show(self):
         if self._window or self._hiding:
             return
-        screen = NSScreen.mainScreen().frame()
+        screen = self._screen_under_mouse() or NSScreen.mainScreen().frame()
         if screen is None:
             return
 
@@ -141,7 +156,23 @@ class WaveformOverlay:
         self._window.animator().setAlphaValue_(1)
         NSAnimationContext.endGrouping()
 
-    def update(self, amplitude: float):
+    @staticmethod
+    def _screen_under_mouse():
+        """多显示器下跟随鼠标所在屏幕；失败回退主屏。"""
+        try:
+            mouse = NSEvent.mouseLocation()
+            for scr in NSScreen.screens():
+                f = scr.frame()
+                if (
+                    f.origin.x <= mouse.x <= f.origin.x + f.size.width
+                    and f.origin.y <= mouse.y <= f.origin.y + f.size.height
+                ):
+                    return f
+        except Exception:
+            pass
+        return None
+
+    def update(self, amplitude: float, elapsed_text: str = ""):
         if self._view:
             self._view._smoothed = (
                 self._view._smoothed * 0.6 + min(amplitude, 1.0) * 0.4
@@ -149,6 +180,7 @@ class WaveformOverlay:
             self._view.amplitudes = self._view.amplitudes[1:] + [
                 self._view._smoothed
             ]
+            self._view.elapsed_text = elapsed_text
             self._view.setNeedsDisplay_(True)
 
     def hide(self):
