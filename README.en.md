@@ -48,6 +48,23 @@ thistelles                     # launch — mic icon appears in the menu bar
 > Requires [uv](https://docs.astral.sh/uv/) and macOS 12+ (Apple Silicon).
 > Grant **Microphone** and **Accessibility** permissions when prompted.
 
+> Requires [uv](https://docs.astral.sh/uv/) and macOS 12+ (Apple Silicon).
+> Grant **Microphone** and **Accessibility** permissions when prompted.
+
+### Usage
+
+1. Press `⌘⇧'` anywhere to start recording (release to stop in push-to-talk mode)
+2. Press again to stop — text lands per your output mode
+3. Cancel anytime from Settings → 取消 while transcribing
+
+### Settings
+
+Click **Settings…** in the menu to open a native panel — every change applies
+immediately: hotkey recorder with live feedback, key mode, output mode,
+language, precision, model quantization, microphone device, history cap,
+idle unload and silence auto-stop. Bottom links open `hotwords.md` and
+`corrections.md` for vocabulary tuning.
+
 ### Common Commands
 
 ```bash

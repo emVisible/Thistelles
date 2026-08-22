@@ -75,13 +75,20 @@ print('  prefetch:', json.dumps(prefetch_all()))
 
 _make_app() {
     _ensure_uv
-    local bin; bin="$(uv tool dir)/thistelles/bin/thistelles"
-    [[ -x "$bin" ]] || { echo "Error: $APP not installed. Run 'install' first."; exit 1; }
+    local pybin; pybin="$(uv tool dir)/thistelles/bin/python3"
+    local shim; shim="$(uv tool dir)/thistelles/bin/thistelles"
+    [[ -x "$pybin" ]] || { echo "Error: $APP not installed. Run 'install' first."; exit 1; }
     local ver; ver=$(thistelles --version 2>/dev/null | awk '{print $2}'); [[ -n "$ver" ]] || ver="0.0.0"
 
     echo "==> Building $APP_BUNDLE (v$ver)"
     rm -rf "$APP_BUNDLE"
     mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
+
+    # 关键：把 venv python 以「包内符号链接」形式暴露，
+    # 使运行进程的可执行路径落在 .app 内部 ——
+    # 这样 NSBundle.mainBundle 才能解析出应用身份，
+    # UNUserNotificationCenter（系统通知）与 TCC 授权才能绑定成功。
+    ln -sf "$pybin" "$APP_BUNDLE/Contents/MacOS/PythonRuntime"
 
     # ── 生成 App 图标（源：麦克风模板 PNG，多尺寸合成 icns）──
     local src_icon="thistelles/assets/mic_idle.png"
@@ -123,9 +130,16 @@ _make_app() {
 </plist>
 PLIST
 
+    local venv_root; venv_root="$(dirname "$(dirname "$pybin")")"
+    local macos_dir; macos_dir="$APP_BUNDLE/Contents/MacOS"
+
     cat > "$APP_BUNDLE/Contents/MacOS/Thistelles" <<LAUNCH
 #!/bin/bash
-exec "$bin" "\$@"
+# 包内符号链接启动时 CParse 不解析符号链接找 pyvenv.cfg，
+# 必须显式指向真实 venv 解释器，否则 site-packages 缺失无法导入
+export __PYVENV_LAUNCHER__="$pybin"
+export VIRTUAL_ENV="$venv_root"
+exec "$macos_dir/PythonRuntime" -c 'import sys; from thistelles.cli import entry; sys.exit(entry())' "\$@"
 LAUNCH
     chmod +x "$APP_BUNDLE/Contents/MacOS/Thistelles"
 

@@ -1,5 +1,34 @@
 Changelog
 
+## [0.10.0] - 2026-08-22
+
+### Added
+
+- Native settings window (设置…): all configuration in one panel with
+  immediate effect — hotkey recorder with live symbol feedback (Esc to cancel),
+  output/language/precision/quantization/mic device/history/idle-unload/
+  silence-stop controls; replaces the nested settings submenus
+- Deterministic correction layer (`corrections.md`): `错误 → 正确` pairs applied
+  after transcription — the reliable "improves with use" path identified by
+  research (Whisper has no input-method-style model learning)
+- Hotword file migrated from txt to Markdown (`hotwords.md`), auto-migrated
+- Notification authorization requested at startup; delivery failures logged
+  instead of silently dropped (root cause of "no popup" reports: the
+  UserNotifications framework was never a dependency and requires bundle
+  context + granted authorization)
+- Recording prevents idle system sleep
+
+### Changed
+
+- Menu slimmed to actions only: 开始/停止、放弃本次录音(动态)、取消转写(动态)、
+  历史记录、设置…、退出 — all configuration moved into the settings window
+- GitHub link moved from menu into settings window
+
+### Fixed
+
+- Pin-by-number race when a recording completed while the pin dialog was open
+  (dialog now carries a snapshot of the list it displayed)
+
 ## [0.9.1] - 2026-08-22
 
 ### Added
