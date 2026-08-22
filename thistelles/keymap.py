@@ -60,12 +60,11 @@ def canonical_hotkey(mods: list[str], key_char: str) -> str:
 
 
 def symbol_for(hotkey: str) -> str:
-    """配置串转菜单/窗口展示符号，如 cmd+shift+' → ⌘⇧'。"""
-    mods = []
-    key = ""
-    for part in [p for p in hotkey.lower().split("+") if p]:
-        if part in _SYMBOLS:
-            mods.append(_SYMBOLS[part])
-        else:
-            key = part.upper() if len(part) == 1 else part
-    return "".join(mods) + key
+    """配置串转展示符号；修饰键按 macOS 菜单惯例排序（⇧⌃⌥⌘）。"""
+    parts = [p for p in hotkey.lower().split("+") if p]
+    mods = "".join(_SYMBOLS[n] for n in ("shift", "ctrl", "alt", "cmd") if n in parts)
+    keys = [p for p in parts if p not in ("shift", "ctrl", "alt", "cmd", "option")]
+    if not keys:
+        return mods
+    key = keys[-1].upper() if len(keys[-1]) == 1 else keys[-1]
+    return mods + key

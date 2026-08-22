@@ -1,5 +1,19 @@
 Changelog
 
+## [0.11.0] - 2026-08-22
+
+### Fixed
+
+- Settings window crashed on open (`objc.BadPrototypeError`): helper builders
+  moved to module level so the NSObject subclass only exposes ObjC-conforming
+  selectors; removed invalid `setValue_` calls on radio buttons
+- Microphone popup now carries its value table (selection previously no-op)
+
+### Changed
+
+- Hotkey display symbols follow macOS HIG order (⇧⌃⌥⌘) regardless of how the
+  combination was recorded
+
 ## [0.10.0] - 2026-08-22
 
 ### Added

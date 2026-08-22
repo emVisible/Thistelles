@@ -8,6 +8,9 @@
   该方法是应用侧副作用与持久化的单一真相源
 - 快捷键捕获使用 NSEvent 本地监听（窗口聚焦期），无需辅助功能权限，
   且捕获期间挂起全局热键，避免组合键误触发录音切换
+
+PyObjC 注意事项：NSObject 子类上「必需位置参数 > 0 且不以 _ 结尾」的方法
+会被当作 ObjC 选择器做原型校验——带参数的纯辅助函数必须放在模块层。
 """
 
 import logging
@@ -48,8 +51,9 @@ logger = logging.getLogger(__name__)
 
 GITHUB_URL = "https://github.com/emVisible/Thistelles"
 
-WINDOW_SIZE = (480, 640)
+WINDOW_SIZE = (480, 660)
 
+# 弹出菜单定义：config_key -> [(显示文案, 存储值), ...]
 POPUP_DEFS = {
     "output_mode": [
         ("插入光标处", "paste"),
@@ -68,7 +72,6 @@ POPUP_DEFS = {
         ("Русский", "ru"),
         ("Português", "pt"),
     ],
-    "model_variant": [("fp16（默认）", "fp16"), ("q4（省内存）", "q4")],
     "history_limit": [("50", 50), ("100", 100), ("200", 200)],
     "auto_stop_silence_s": [("关闭", 0), ("2 秒", 2), ("3 秒", 3), ("5 秒", 5)],
     "max_record_s": [("5 分钟", 300), ("10 分钟", 600), ("20 分钟", 1200)],
@@ -80,12 +83,88 @@ POPUP_DEFS = {
     ],
 }
 
+ROW_LABELS = {
+    "output_mode": "输出方式",
+    "language": "识别语言",
+    "history_limit": "历史上限",
+    "auto_stop_silence_s": "静音自停",
+    "max_record_s": "单次上限",
+    "model_idle_unload_min": "闲置卸载",
+    "__mic__": "麦克风设备",
+}
+
+
+# ── 模块层构建助手（不进入 ObjC 类字典）─────────────────────────
+
 
 def _label(text):
     tf = NSTextField.labelWithString_(text)
     f = tf.frame()
     tf.setFrame_(((24, 0), (112, f.size.height)))
     return tf
+
+
+def _new_button(title, x, y, w=104, h=26):
+    b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
+    b.setTitle_(title)
+    b.setBezelStyle_(1)  # rounded
+    return b
+
+
+def _new_radio(title, x, y, w):
+    b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, 24))
+    b.setButtonType_(NSRadioButton)
+    b.setTitle_(title)
+    return b
+
+
+def _new_popup(panel, key, x, y, w=310):
+    p = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+        NSMakeRect(x, y, w, 26), False
+    )
+
+    if key == "__mic__":
+        p.addItemWithTitle_("系统默认")
+        devices = recorder.Recorder.enumerate_inputs()[:12]
+        names = []
+        for dev in devices:
+            name = dev["name"] or f"device #{dev['index']}"
+            if len(name) > 34:
+                name = name[:32] + "…"
+            p.addItemWithTitle_(name)
+            names.append(dev["name"])
+        panel.mic_device_names = names
+        panel.popup_values[key] = [""] + names
+
+        current = str(panel.app.config_get("input_device_name", "")).strip().lower()
+        lowered = [n.lower()[:32] for n in names]
+        idx = next(
+            (i for i, n in enumerate(lowered) if n == current[: len(n)]), -1
+        )
+        if idx >= 0:
+            p.selectItemAtIndex_(idx + 1)  # 第 0 项是系统默认
+    else:
+        defs = POPUP_DEFS[key]
+        for text, _v in defs:
+            p.addItemWithTitle_(text)
+        current = str(panel.app.config_get(key, ""))
+        for i, (_t, v) in enumerate(defs):
+            if str(v) == current:
+                p.selectItemAtIndex_(i)
+                break
+
+    p.setTarget_(panel)
+    p.setAction_("popupChanged:")
+    return p
+
+
+def _add_popup_row(panel, content, state, key):
+    lb = _label(ROW_LABELS.get(key, key))
+    lb.setFrameOrigin_(NSMakePoint(24, state["y"] + 7))
+    content.addSubview_(lb)
+    p = _new_popup(panel, key, 140, state["y"])
+    content.addSubview_(p)
+    state["y"] -= 36
 
 
 class SettingsPanel(NSObject):
@@ -99,14 +178,17 @@ class SettingsPanel(NSObject):
         self.window = None
         self.hotkeyField = None
         self.rerecordBtn = None
-        self.popups = {}        # config_key -> NSPopUpButton
-        self.popupValues = {}   # config_key -> [values]
-        self.modeBase = None
-        self.modeMax = None
-        self.variantFp16 = None
-        self.variantQ4 = None
-        self.keyToggle = None
-        self.keyPtt = None
+        self.popups = {}          # config_key -> NSPopUpButton
+        self.popupValues = {}     # config_key -> [存储值]
+        self.mic_device_names = []
+
+        self.modeBaseBtn = None
+        self.modeMaxBtn = None
+        self.variantFp16Btn = None
+        self.variantQ4Btn = None
+        self.keyToggleBtn = None
+        self.keyPttBtn = None
+
         self.capturing = False
         self.monitor = None
         return self
@@ -125,8 +207,7 @@ class SettingsPanel(NSObject):
 
     def _activate_app(self):
         try:
-            app = NSApplication.sharedApplication()
-            app.activateIgnoringOtherApps_(True)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
             pass
 
@@ -148,16 +229,12 @@ class SettingsPanel(NSObject):
         content = NSView.alloc().initWithFrame_(((0, 0), (w, h)))
         win.setContentView_(content)
 
-        state = {"y": h - 52}
+        state = {"y": h - 56}
 
-        def label_row(text):
+        def add_label_row(text):
             lb = _label(text)
             lb.setFrameOrigin_(NSMakePoint(24, state["y"] + 7))
             content.addSubview_(lb)
-
-        def control_at(control):
-            control.setFrameOrigin_(NSMakePoint(140, state["y"]))
-            content.addSubview_(control)
 
         def advance(step=36):
             state["y"] -= step
@@ -165,114 +242,92 @@ class SettingsPanel(NSObject):
         def gap(step=14):
             state["y"] -= step
 
-        def add_popup(key):
-            label_row(cfg_label_for(key))
-            p = self._make_popup(((140, state["y"]), (310, 26)), key)
-            content.addSubview_(p)
-            advance()
-
-        def add_radio_pair(label_text, left_title, left_value, right_title,
-                           right_value, current, action):
-            label_row(label_text)
-            b1 = NSButton.alloc().initWithFrame_(NSMakeRect(140, state["y"], 130, 24))
-            b1.setButtonType_(NSRadioButton)
-            b1.setTitle_(left_title)
-            b1.setTarget_(self)
-            b1.setAction_(action)
-            b1.setValue_(left_value)
-            content.addSubview_(b1)
-            b2 = NSButton.alloc().initWithFrame_(NSMakeRect(282, state["y"], 160, 24))
-            b2.setButtonType_(NSRadioButton)
-            b2.setTitle_(right_title)
-            b2.setTarget_(self)
-            b2.setAction_(action)
-            b2.setValue_(right_value)
-            content.addSubview_(b2)
-            if str(current) == str(left_value):
-                b1.setState_(1)
-            elif str(current) == str(right_value):
-                b2.setState_(1)
-            advance()
-
         # ── 录音快捷键 ──
-        label_row("录音快捷键")
+        add_label_row("录音快捷键")
         self.hotkeyField = NSTextField.textFieldWithString_(
             symbol_for(str(self.app.config_get("hotkey", "")))
         )
         self.hotkeyField.setFrame_(NSMakeRect(140, state["y"], 168, 26))
         self.hotkeyField.setEditable_(False)
         self.hotkeyField.setBordered_(True)
-        self.hotkeyField.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(13, 0.5))
-        content.addSubview_(self.hotkeyField)
-        self.rerecordBtn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(318, state["y"], 96, 26)
+        self.hotkeyField.setFont_(
+            NSFont.monospacedDigitSystemFontOfSize_weight_(13, 0.5)
         )
-        self.rerecordBtn.setTitle_("重新录制")
-        self.rerecordBtn.setBezelStyle_(1)
+        content.addSubview_(self.hotkeyField)
+
+        self.rerecordBtn = _new_button("重新录制", 320, state["y"], 96, 26)
         self.rerecordBtn.setTarget_(self)
         self.rerecordBtn.setAction_("startCapture:")
         content.addSubview_(self.rerecordBtn)
         advance()
 
         # ── 输出与语言 ──
-        add_popup("output_mode")
-        add_popup("language")
+        _add_popup_row(self, content, state, "output_mode")
+        _add_popup_row(self, content, state, "language")
         gap()
 
-        # ── 引擎相关 ──
-        cur_mode = str(self.app.config_get("mode", "base"))
-        cur_variant = str(self.app.config_get("model_variant", "fp16"))
-        label_row("精度模式")
-        self.modeBase = self._radio("标准 base", left=True)
-        self.modeBase.setValue_("base")
-        content.addSubview_(self.modeBase)
-        self.modeMax = self._radio("高精度 turbo", left=False)
-        self.modeMax.setValue_("max")
-        content.addSubview_(self.modeMax)
-        if cur_mode == "base":
-            self.modeBase.setState_(1)
+        # ── 精度模式（radio pair）──
+        add_label_row("精度模式")
+        cur = str(self.app.config_get("mode", "base"))
+        self.modeBaseBtn = _new_radio("标准 base", 140, state["y"], 130)
+        self.modeBaseBtn.setTarget_(self)
+        self.modeBaseBtn.setAction_("precisionChanged:")
+        content.addSubview_(self.modeBaseBtn)
+        self.modeMaxBtn = _new_radio("高精度 turbo", 282, state["y"], 150)
+        self.modeMaxBtn.setTarget_(self)
+        self.modeMaxBtn.setAction_("precisionChanged:")
+        content.addSubview_(self.modeMaxBtn)
+        if cur == "max":
+            self.modeMaxBtn.setState_(1)
         else:
-            self.modeMax.setState_(1)
+            self.modeBaseBtn.setState_(1)
         advance()
 
-        label_row("模型量化")
-        self.variantFp16 = self._radio("fp16", left=True)
-        self.variantFp16.setValue_("fp16")
-        content.addSubview_(self.variantFp16)
-        self.variantQ4 = self._radio("q4 省内存", left=False)
-        self.variantQ4.setValue_("q4")
-        content.addSubview_(self.variantQ4)
-        if cur_variant == "fp16":
-            self.variantFp16.setState_(1)
+        # ── 模型量化（radio pair）──
+        add_label_row("模型量化")
+        cur_v = str(self.app.config_get("model_variant", "fp16"))
+        self.variantFp16Btn = _new_radio("fp16", 140, state["y"], 130)
+        self.variantFp16Btn.setTarget_(self)
+        self.variantFp16Btn.setAction_("variantChanged:")
+        content.addSubview_(self.variantFp16Btn)
+        self.variantQ4Btn = _new_radio("q4 省内存", 282, state["y"], 150)
+        self.variantQ4Btn.setTarget_(self)
+        self.variantQ4Btn.setAction_("variantChanged:")
+        content.addSubview_(self.variantQ4Btn)
+        if cur_v == "q4":
+            self.variantQ4Btn.setState_(1)
         else:
-            self.variantQ4.setState_(1)
+            self.variantFp16Btn.setState_(1)
         advance()
 
-        add_popup("model_idle_unload_min")
+        _add_popup_row(self, content, state, "model_idle_unload_min")
         gap()
 
-        # ── 录音行为 ──
+        # ── 按键模式（radio pair）──
+        add_label_row("按键模式")
         cur_hm = str(self.app.config_get("hotkey_mode", "toggle"))
-        label_row("按键模式")
-        self.keyToggle = self._radio("点击切换", left=True)
-        self.keyToggle.setValue_("toggle")
-        content.addSubview_(self.keyToggle)
-        self.keyPtt = self._radio("按住说话", left=False)
-        self.keyPtt.setValue_("ptt")
-        content.addSubview_(self.keyPtt)
-        if cur_hm == "toggle":
-            self.keyToggle.setState_(1)
+        self.keyToggleBtn = _new_radio("点击切换", 140, state["y"], 130)
+        self.keyToggleBtn.setTarget_(self)
+        self.keyToggleBtn.setAction_("keyModeChanged:")
+        content.addSubview_(self.keyToggleBtn)
+        self.keyPttBtn = _new_radio("按住说话", 282, state["y"], 150)
+        self.keyPttBtn.setTarget_(self)
+        self.keyPttBtn.setAction_("keyModeChanged:")
+        content.addSubview_(self.keyPttBtn)
+        if cur_hm == "ptt":
+            self.keyPttBtn.setState_(1)
         else:
-            self.keyPtt.setState_(1)
+            self.keyToggleBtn.setState_(1)
         advance()
 
-        add_popup("__mic__")
-        add_popup("auto_stop_silence_s")
-        add_popup("max_record_s")
+        # ── 麦克风 / 静音自停 / 单次上限 ──
+        _add_popup_row(self, content, state, "__mic__")
+        _add_popup_row(self, content, state, "auto_stop_silence_s")
+        _add_popup_row(self, content, state, "max_record_s")
         gap()
 
         # ── 历史 ──
-        add_popup("history_limit")
+        _add_popup_row(self, content, state, "history_limit")
         gap()
 
         # ── 底部链接行 ──
@@ -284,15 +339,12 @@ class SettingsPanel(NSObject):
             ("数据目录", "openDataDir:"),
             ("⭐ GitHub", "openGitHub:"),
         ):
-            b = NSButton.alloc().initWithFrame_(NSMakeRect(bx, link_y, 104, 26))
-            b.setTitle_(title)
-            b.setBezelStyle_(1)
+            b = _new_button(title, bx, link_y)
             b.setTarget_(self)
             b.setAction_(sel)
             content.addSubview_(b)
             bx += 112
 
-        # 版本角标
         ver = NSTextField.labelWithString_(f"v{self.app.version_string()}")
         vf = ver.frame()
         ver.setFrameOrigin_(NSMakePoint(w - vf.size.width - 16, link_y + 6))
@@ -301,80 +353,27 @@ class SettingsPanel(NSObject):
 
         return win
 
-    def _radio(self, title, left):
-        b = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 150, 24))
-        b.setButtonType_(NSRadioButton)
-        b.setTitle_(title)
-        b.setTarget_(self)
-        b.setAction_("precisionChanged:" if left else "variantChanged:")
-        return b
-
-    def _make_popup(self, frame, key):
-        p = NSPopUpButton.alloc().initWithFrame_pullsDown_(frame, False)
-
-        if key == "__mic__":
-            p.addItemWithTitle_("系统默认")
-            for dev in recorder.Recorder.enumerate_inputs()[:12]:
-                name = dev["name"] or f"device #{dev['index']}"
-                if len(name) > 34:
-                    name = name[:32] + "…"
-                p.addItemWithTitle_(name)
-            current = str(self.app.config_get("input_device_name", "")).strip().lower()
-            names = [""] + [
-                d["name"].lower()[:32]
-                for d in recorder.Recorder.enumerate_inputs()[:12]
-            ]
-            idx = next((i for i, n in enumerate(names) if n == current), 0)
-            p.selectItemAtIndex_(idx)
-            p.setTarget_(self)
-            p.setAction_("micChanged:")
-            return p
-
-        defs = POPUP_DEFS[key]
-        labels = [t for t, _v in defs]
-        values = [v for _t, v in defs]
-        for t in labels:
-            p.addItemWithTitle_(t)
-        current = str(self.app.config_get(key, ""))
-        for i, v in enumerate(values):
-            if str(v) == current:
-                p.selectItemAtIndex_(i)
-                break
-        p.setTarget_(self)
-        p.setAction_("popupChanged:")
-        self.popups[key] = p
-        self.popupValues[key] = values
-        return p
-
     # ── 事件路由 ─────────────────────────────────────────────────
 
     def popupChanged_(self, sender):
         for key, btn in self.popups.items():
             if btn == sender:
                 idx = int(sender.indexOfSelectedItem())
-                value = self.popup_values[key][idx]
-                self.app.apply_config(key, value)
+                values = self.popupValues.get(key, [])
+                if 0 <= idx < len(values):
+                    self.app.apply_config(key, values[idx])
                 return
 
-    def micChanged_(self, sender):
-        idx = int(sender.indexOfSelectedItem())
-        if idx == 0:
-            self.app.apply_config("input_device_name", "")
-            return
-        devices = recorder.Recorder.enumerate_inputs()[:12]
-        if 1 <= idx <= len(devices):
-            self.app.apply_config("input_device_name", devices[idx - 1]["name"])
-
     def precisionChanged_(self, sender):
-        value = "max" if sender == self.modeMax else "base"
+        value = "max" if sender == self.modeMaxBtn else "base"
         self.app.apply_config("mode", value)
 
     def variantChanged_(self, sender):
-        value = "q4" if sender == self.variantQ4 else "fp16"
+        value = "q4" if sender == self.variantQ4Btn else "fp16"
         self.app.apply_config("model_variant", value)
 
     def keyModeChanged_(self, sender):
-        value = "ptt" if sender == self.keyPtt else "toggle"
+        value = "ptt" if sender == self.keyPttBtn else "toggle"
         self.app.apply_config("hotkey_mode", value)
 
     # ── 快捷键捕获 ───────────────────────────────────────────────
@@ -395,16 +394,16 @@ class SettingsPanel(NSObject):
         if not self.capturing:
             return event
 
-        if keymap.is_cancel_keycode(int(event.keyCode())):
+        if is_cancel_keycode(int(event.keyCode())):
             self._end_capture(cancel=True)
-            return None
+            return None  # 吞掉 Esc，避免关闭窗口
 
-        mods = keymap.modifiers_from_flags(int(event.modifierFlags()))
-        ch = keymap.base_character(event)
+        mods = modifiers_from_flags(int(event.modifierFlags()))
+        ch = base_character(event)
         if not mods or not ch:
             return None  # 必须携带至少一个修饰键；吞掉无效按键
 
-        hk = keymap.canonical_hotkey(mods, ch)
+        hk = canonical_hotkey(mods, ch)
         self.hotkeyField.setStringValue_(symbol_for(hk))
         self.app.apply_config("hotkey", hk)
 
@@ -441,19 +440,6 @@ class SettingsPanel(NSObject):
 
     def openGitHub_(self, sender):
         webbrowser.open(GITHUB_URL)
-
-
-def cfg_label_for(key):
-    labels = {
-        "output_mode": "输出方式",
-        "language": "识别语言",
-        "model_variant": "模型量化",
-        "history_limit": "历史上限",
-        "auto_stop_silence_s": "静音自停",
-        "max_record_s": "单次上限",
-        "model_idle_unload_min": "闲置卸载",
-    }
-    return labels.get(key, key)
 
 
 def show_settings(app) -> SettingsPanel:
