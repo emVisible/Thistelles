@@ -17,6 +17,8 @@ class InserterTest(unittest.TestCase):
             mock.patch.object(
                 ins, "paste_at_cursor", side_effect=lambda: self.paste_calls.append(1) or True
             ),
+            # 权限状态是平台相关的环境依赖，测试中显式注入而非依赖宿主机
+            mock.patch.object(ins, "accessibility_trusted", return_value=True),
         ]
         for p in patchers:
             p.start()
