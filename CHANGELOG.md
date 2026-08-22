@@ -1,5 +1,12 @@
 Changelog
 
+## [0.9.1] - 2026-08-22
+
+### Added
+
+- Wheel metadata now embeds the full README as long description
+  (PyPI / `pip show` / GitHub Release page render rich text)
+
 ## [0.9.0] - 2026-08-22
 
 ### Added

@@ -1,7 +1,8 @@
 [project]
 name = "thistelles"
-version = "0.9.0"
+version = "0.9.1"
 description = "macOS 全局快捷键语音输入 — 录音即转文字，直达剪贴板"
+readme = "README.md"
 authors = [
     { name = "Thistelles" },
 ]
