@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thistelles — 按住说话，文字即达</title>
+<meta name="description" content="macOS 菜单栏语音输入。全局快捷键唤起，本地 Whisper 转写，文字直接插入光标处。100% 本地推理，语音不出设备。">
+<meta property="og:title" content="Thistelles — 按住说话，文字即达">
+<meta property="og:description" content="macOS 菜单栏语音输入 · 本地 Whisper · 语音不出设备">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2308090A'/%3E%3Cpath d='M32 50V20M32 30l-9-7M32 40l9-8M32 20l4-5' stroke='%23EDEDEF' stroke-width='2.6' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#08090A;--surface:#0E0F11;--ink:#EDEDEF;--dim:#8A8F98;
+  --accent:#9D8FF0;--line:rgba(237,237,239,.08);--line2:rgba(237,237,239,.16);
+  --font-d:'Space Grotesk',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+  --font-b:-apple-system,BlinkMacSystemFont,'PingFang SC','Segoe UI',sans-serif;
+  --font-m:ui-monospace,'SF Mono',SFMono-Regular,Menlo,monospace;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-b);
+  -webkit-font-smoothing:antialiased;line-height:1.6;overflow-x:hidden}
+::selection{background:var(--accent);color:#08090A}
+
+/* ── 脊柱藤线（桌面） ── */
+.spine{position:fixed;left:34px;top:12vh;height:76vh;width:1px;background:var(--line);z-index:0}
+.spine i{position:absolute;left:0;top:0;width:1px;height:100%;background:var(--accent);
+  transform-origin:top;transform:scaleY(0)}
+@media(max-width:1023px){.spine{display:none}}
+
+/* ── 导航 ── */
+.nav{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;
+  justify-content:space-between;padding:16px 28px;
+  background:rgba(8,9,10,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+.brand svg{width:22px;height:22px;display:block}
+.brand b{font-family:var(--font-d);font-weight:700;font-size:17px;letter-spacing:.02em}
+.nav-r{display:flex;align-items:center;gap:14px}
+.langbtn{background:none;border:1px solid var(--line2);color:var(--dim);border-radius:999px;
+  padding:4px 12px;font-family:var(--font-m);font-size:12px;cursor:pointer;transition:.25s var(--ease)}
+.langbtn:hover{color:var(--ink);border-color:var(--accent)}
+.gh{color:var(--dim);display:flex;align-items:center;transition:.25s}
+.gh:hover{color:var(--ink)}
+.gh svg{width:19px;height:19px}
+
+/* ── 版式基元 ── */
+.wrap{max-width:1080px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
+section{padding:96px 0}
+.kicker{font-family:var(--font-m);font-size:11px;letter-spacing:.32em;color:var(--dim);text-transform:uppercase}
+.kicker em{color:var(--accent);font-style:normal;margin-right:10px}
+h1,h2{font-family:var(--font-d);letter-spacing:-.01em}
+h2{font-size:clamp(26px,3.4vw,38px);font-weight:700;line-height:1.15;margin:14px 0 10px}
+.sub{color:var(--dim);max-width:520px;font-size:15px}
+
+/* 生长式入场 */
+.reveal{opacity:0;transform:translateY(18px)}
+.reveal.grown{opacity:1;transform:none;animation:grow .7s var(--ease)}
+@keyframes grow{
+  from{clip-path:inset(0 0 100% 0)}
+  to{clip-path:inset(-20% -20% -8% -20%)}
+}
+.d1{animation-delay:.06s}.d2{animation-delay:.14s}.d3{animation-delay:.22s}
+
+/* ── HERO ── */
+.hero{padding:150px 0 60px;min-height:92vh;display:flex;flex-direction:column;justify-content:center}
+.hero h1{font-size:clamp(44px,7vw,86px);line-height:1.06;font-weight:700;margin:18px 0 20px}
+.hero h1 .w{display:inline-block;overflow:hidden;vertical-align:bottom;padding-bottom:.08em}
+.hero h1 .w>span{display:inline-block;transform:translateY(112%);
+  animation:rise .8s var(--ease) forwards}
+.hero h1 .w:nth-child(2)>span{animation-delay:.09s}
+@keyframes rise{to{transform:none}}
+.hero .sub{font-size:clamp(15px,1.6vw,17px);margin-bottom:8px}
+.panel{position:relative;margin-top:42px;border:1px solid var(--line);border-radius:14px;
+  background:var(--surface);cursor:pointer;user-select:none;-webkit-user-select:none;
+  touch-action:none;overflow:hidden;outline:none;transition:border-color .3s}
+.panel:focus-visible{border-color:var(--accent)}
+.panel.holding{border-color:rgba(157,143,240,.55)}
+.panel canvas{display:block;width:100%;height:min(46vh,380px)}
+.panel .timer{position:absolute;right:16px;top:12px;font-family:var(--font-m);
+  font-size:13px;color:var(--dim);opacity:0;transition:.3s}
+.panel.holding .timer,.panel.decay .timer{opacity:1}
+.panel .hint{position:absolute;left:16px;top:12px;font-family:var(--font-m);
+  font-size:12px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;transition:.3s}
+.panel.holding .hint,.panel.decay .hint{color:var(--accent)}
+.caption{min-height:56px;margin-top:18px;font-family:var(--font-d);
+  font-size:clamp(18px,2.6vw,26px);color:var(--ink)}
+.caption .cur{display:inline-block;width:2px;height:1em;background:var(--accent);
+  vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.chip-row{margin-top:30px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:10px;border:1px solid var(--line2);
+  border-radius:9px;padding:10px 16px;font-family:var(--font-m);font-size:13.5px;
+  color:var(--ink);cursor:pointer;background:var(--surface);transition:.25s var(--ease)}
+.chip:hover{border-color:var(--accent)}
+.chip.ok{border-color:var(--accent);color:var(--accent)}
+.chip small{color:var(--dim);font-family:var(--font-b)}
+.ghost{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--dim);
+  font-size:13.5px;border-bottom:1px solid transparent;padding-bottom:2px;transition:.25s}
+.ghost:hover{color:var(--ink);border-color:var(--accent)}
+.ghost svg{width:14px;height:14px}
+
+/* ── 三态按钮 ── */
+.states{display:flex;gap:18px;flex-wrap:wrap;margin-top:38px}
+.statecard{flex:1 1 220px;border:1px solid var(--line);border-radius:12px;padding:20px;
+  background:var(--surface);transition:border-color .35s var(--ease)}
+.statecard .dot{width:7px;height:7px;border-radius:50%;background:var(--line2);
+  margin-bottom:14px;transition:.3s}
+.statecard.on{border-color:rgba(157,143,240,.5)}
+.statecard.on .dot{background:var(--accent);box-shadow:0 0 0 4px rgba(157,143,240,.14);
+  animation:pulse 1.6s ease infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 9px rgba(157,143,240,.05)}}
+.statecard b{font-family:var(--font-d);font-size:15.5px;display:block;margin-bottom:4px;font-weight:500}
+.statecard span{font-size:13px;color:var(--dim)}
+
+/* ── 词典 ── */
+.dic-grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:38px;align-items:stretch}
+.mdbox{border:1px solid var(--line);border-radius:12px;background:var(--surface);
+  padding:20px 22px;font-family:var(--font-m);font-size:13.5px;line-height:2.1;color:var(--dim)}
+.mdbox .cmt{opacity:.5}
+.mdbox .arr{color:var(--accent)}
+.live{border:1px solid var(--line);border-radius:12px;background:var(--surface);
+  padding:26px 24px;display:flex;flex-direction:column;justify-content:center;position:relative}
+.live .sent{font-family:var(--font-d);font-size:clamp(17px,2vw,21px);line-height:1.8}
+.live .from{position:relative;white-space:nowrap}
+.live .from::after{content:"";position:absolute;left:0;top:56%;height:2px;width:100%;
+  background:var(--accent);transform:scaleX(0);transform-origin:left;
+  transition:transform .45s var(--ease)}
+.live.play .from::after{transform:scaleX(1)}
+.live .to{color:var(--accent);display:inline-block;opacity:0;transform:translateX(-8px);
+  transition:.45s var(--ease) .18s}
+.live.play .to{opacity:1;transform:none}
+.live .replay{position:absolute;right:14px;top:12px;background:none;border:none;
+  color:var(--dim);cursor:pointer;font-size:15px;line-height:1;transition:.25s}
+.live .replay:hover{color:var(--accent)}
+
+/* ── 本地宣言 ── */
+.facts{display:flex;margin-top:38px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.fact{flex:1;padding:26px 26px 26px 0;font-family:var(--font-d);font-size:clamp(15px,1.8vw,19px)}
+.fact+.fact{padding-left:26px;border-left:1px solid var(--line)}
+.fact i{font-style:normal;color:var(--accent);font-family:var(--font-m);font-size:11px;
+  display:block;margin-bottom:10px;letter-spacing:.28em}
+
+/* ── 终端安装 ── */
+.term{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.term .bar{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.term .bar i{width:10px;height:10px;border-radius:50%;background:var(--line2)}
+.term .bar i:first-child{background:rgba(157,143,240,.5)}
+.term pre{padding:22px;font-family:var(--font-m);font-size:14px;overflow:auto;line-height:1.9}
+.term .p{color:var(--accent)}
+.term .c{color:var(--dim)}
+.inst-hint{margin-top:16px}
+
+/* ── 页脚 ── */
+footer{border-top:1px solid var(--line);padding:34px 0;margin-top:40px}
+footer .wrap{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+footer p{color:var(--dim);font-size:13px}
+footer a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line2)}
+footer a:hover{color:var(--accent);border-color:var(--accent)}
+
+@media(max-width:860px){
+  .dic-grid{grid-template-columns:1fr}
+  .facts{flex-direction:column}
+  .fact+.fact{padding-left:0;border-left:none;border-top:1px solid var(--line);padding-top:22px}
+  section{padding:72px 0}
+  .hero{padding-top:120px}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a class="brand" href="#">
+    <img src="mic_idle.png" alt="" style="width:22px;height:22px;display:block;filter:invert(1)">
+    <b>Thistelles</b>
+  </a>
+  <div class="nav-r">
+    <button id="langBtn" class="langbtn" aria-label="Switch language">EN</button>
+    <a class="gh" href="https://github.com/emVisible/Thistelles" target="_blank" rel="noopener" aria-label="GitHub">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    </a>
+  </div>
+</nav>
+
+<div class="spine" aria-hidden="true"><i id="spineFill"></i></div>
+
+<header class="hero wrap">
+  <p class="kicker reveal">MACOS · <span data-i18n="hero.kicker">菜单栏 · 本地推理</span></p>
+  <h1>
+    <span class="w"><span data-i18n="hero.h1a">按住说话，</span></span><br>
+    <span class="w"><span data-i18n="hero.h1b">文字即达。</span></span>
+  </h1>
+  <p class="sub reveal d1" data-i18n="hero.sub">全局快捷键唤起，本地 Whisper 转写，文字直接插入光标处。语音不出设备。</p>
+
+  <div class="panel reveal d2" id="panel" role="button" tabindex="0" aria-label="按住说话演示">
+    <canvas id="cv"></canvas>
+    <span class="hint" id="demoHint" data-i18n="demo.hold">按住说话（演示）</span>
+    <span class="timer" id="timer">0:00</span>
+  </div>
+  <p class="caption"><span id="capText"></span><span class="cur" aria-hidden="true"></span></p>
+
+  <div class="chip-row">
+    <button class="chip" id="copyChip">
+      <span class="dollar">$</span> bash guide.sh install
+      <small id="copyLabel" data-i18n="inst.copy">复制</small>
+    </button>
+    <a class="ghost" href="https://github.com/emVisible/Thistelles" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      emVisible/Thistelles
+    </a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="states">
+    <p class="kicker reveal"><em>01</em><span data-i18n="k.states">主按钮</span></p>
+    <h2 class="reveal d1" data-i18n="states.title">一个按钮，整个生命周期</h2>
+    <p class="sub reveal d2" data-i18n="states.desc">空闲、录音、转写——取消永远一键可达。</p>
+    <div class="states">
+      <div class="statecard on" id="stCard0">
+        <div class="dot"></div><b data-i18n="st1">开始录音</b><span data-i18n="st1d">点击开始</span>
+      </div>
+      <div class="statecard" id="stCard1">
+        <div class="dot"></div><b data-i18n="st2">停止录音</b><span data-i18n="st2d">再次点击结束并转写</span>
+      </div>
+      <div class="statecard" id="stCard2">
+        <div class="dot"></div><b data-i18n="st3">转写中… 点击取消</b><span data-i18n="st3d">中断本次结果</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="dic">
+    <p class="kicker reveal"><em>02</em><span data-i18n="k.dic">词典 · 越用越准</span></p>
+    <h2 class="reveal d1" data-i18n="dic.title">自定义词典</h2>
+    <p class="sub reveal d2" data-i18n="dic.body">听错的词，纠正一次，从此不再错。确定性替换，不靠玄学。</p>
+    <div class="dic-grid">
+      <div class="mdbox reveal d1">
+        <div class="cmt"># corrections.md</div>
+        <div data-i18n-html="dic.md1">- 隐形千疑 <span class="arr">→</span> 引擎迁移</div>
+        <div data-i18n-html="dic.md2">- 端道端 <span class="arr">-&gt;</span> 端到端</div>
+        <div>- Thistelles</div>
+      </div>
+      <div class="live reveal d2" id="dicLive">
+        <button class="replay" id="dicReplay" aria-label="replay">&#8635;</button>
+        <p class="sent"><span data-i18n="dic.pre">今天的</span><span class="from" id="dicFrom" data-i18n="dic.from">隐形千疑</span><span class="to" id="dicTo" data-i18n="dic.to">引擎迁移</span><span data-i18n="dic.post">评审会改到周四</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="local">
+    <p class="kicker reveal"><em>03</em><span data-i18n="k.local">本地</span></p>
+    <h2 class="reveal d1" data-i18n="local.title">你的声音，不出设备。</h2>
+    <div class="facts">
+      <div class="fact reveal"><i>LOCAL</i><span data-i18n="f1">推理在本地 Metal GPU</span></div>
+      <div class="fact reveal d1"><i>OFFLINE</i><span data-i18n="f2">断网照常工作</span></div>
+      <div class="fact reveal d2"><i>PRIVATE</i><span data-i18n="f3">语音零上传</span></div>
+    </div>
+  </section>
+
+  <section id="install">
+    <p class="kicker reveal"><em>04</em><span data-i18n="k.install">安装</span></p>
+    <h2 class="reveal d1" data-i18n="inst.title">三十秒安装</h2>
+    <div class="term reveal d2">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="p">$</span> bash guide.sh install
+<span class="c"># <span data-i18n="inst.req">uv · macOS 12+ · Apple Silicon</span></span></pre>
+    </div>
+    <p class="sub inst-hint reveal d3" data-i18n="inst.hint">克隆仓库后在根目录执行；脚本自动构建并注册 /Applications 应用。</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>© Thistelles Contributors · MIT</p>
+    <p><span data-i18n="foot.made">以荆棘之名</span> · <a href="https://github.com/emVisible/Thistelles" target="_blank" rel="noopener">GitHub</a></p>
+  </div>
+</footer>
+<script>
+/* ── i18n ─────────────────────────────────────────────── */
+const I18N = {
+  zh: {
+    "doc.title": "Thistelles — 按住说话，文字即达",
+    "hero.kicker": "菜单栏 · 本地推理",
+    "hero.h1a": "按住说话，", "hero.h1b": "文字即达。",
+    "hero.sub": "全局快捷键唤起，本地 Whisper 转写，文字直接插入光标处。语音不出设备。",
+    "demo.hold": "按住说话（演示）", "demo.rec": "松开，转写中…",
+    "demo.caption": "下午三点同步引擎迁移进度，会前更新排期文档",
+    "inst.copy": "复制", "inst.copied": "已复制 ✓",
+    "k.states": "主按钮", "k.dic": "词典 · 越用越准", "k.local": "本地", "k.install": "安装",
+    "states.title": "一个按钮，整个生命周期",
+    "states.desc": "空闲、录音、转写——取消永远一键可达。",
+    "st1": "开始录音", "st1d": "点击开始",
+    "st2": "停止录音", "st2d": "再次点击结束并转写",
+    "st3": "转写中… 点击取消", "st3d": "中断本次结果",
+    "dic.title": "自定义词典",
+    "dic.body": "听错的词，纠正一次，从此不再错。确定性替换，不靠玄学。",
+    "dic.md1": "- 隐形千疑 <span class=\"arr\">→</span> 引擎迁移",
+    "dic.md2": "- 端道端 <span class=\"arr\">-&gt;</span> 端到端",
+    "dic.pre": "今天的", "dic.from": "隐形千疑", "dic.to": "引擎迁移",
+    "dic.post": "评审会改到周四",
+    "local.title": "你的声音，不出设备。",
+    "f1": "推理在本地 Metal GPU", "f2": "断网照常工作", "f3": "语音零上传",
+    "k.install": "安装", "inst.title": "三十秒安装",
+    "inst.req": "uv · macOS 12+ · Apple Silicon",
+    "inst.hint": "克隆仓库后在根目录执行；脚本自动构建并注册 /Applications 应用。",
+    "foot.made": "以荆棘之名"
+  },
+  en: {
+    "doc.title": "Thistelles — Hold to talk. Text lands.",
+    "hero.kicker": "MENU BAR · ON-DEVICE INFERENCE",
+    "hero.h1a": "Hold to talk.", "hero.h1b": "Text lands.",
+    "hero.sub": "Summoned by a global hotkey, transcribed on-device by Whisper, inserted right at your cursor. Audio never leaves your machine.",
+    "demo.hold": "HOLD TO TALK (DEMO)", "demo.rec": "RELEASE — TRANSCRIBING…",
+    "demo.caption": "Sync migration progress at 3pm, update the doc before standup.",
+    "inst.copy": "Copy", "inst.copied": "Copied ✓",
+    "k.states": "PRIMARY", "k.dic": "DICTIONARY · SHARPER WITH USE", "k.local": "LOCAL", "k.install": "SETUP",
+    "states.title": "One button, whole lifecycle",
+    "states.desc": "Idle, recording, transcribing — cancel is always one click away.",
+    "st1": "Start Recording", "st1d": "Click to begin",
+    "st2": "Stop Recording", "st2d": "Click again to transcribe",
+    "st3": "Transcribing… Click to Cancel", "st3d": "Discard this result",
+    "dic.title": "Custom dictionary",
+    "dic.body": "Miss-heard once, corrected forever. Deterministic replacement — no magic.",
+    "dic.md1": "- reciever <span class=\"arr\">-&gt;</span> receiver",
+    "dic.md2": "- seperate <span class=\"arr\">-&gt;</span> separate",
+    "dic.pre": "the ", "dic.from": "reciever", "dic.to": "receiver",
+    "dic.post": " latency review moved to thursday",
+    "local.title": "Your voice never leaves.",
+    "f1": "Inference on local Metal GPU", "f2": "Works offline", "f3": "Zero audio upload",
+    "k.install": "SETUP", "inst.title": "Thirty-second setup",
+    "inst.req": "uv · macOS 12+ · Apple Silicon",
+    "inst.hint": "Clone the repo and run at its root — the script builds and registers the /Applications bundle.",
+    "foot.made": "In the name of thorns"
+  }
+};
+
+let LANG = localStorage.getItem("lang") ||
+  ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en");
+
+function applyLang(lang) {
+  LANG = lang;
+  localStorage.setItem("lang", lang);
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  document.title = I18N[lang]["doc.title"];
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const v = I18N[lang][el.dataset.i18n];
+    if (v !== undefined) el.textContent = v;
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const v = I18N[lang][el.dataset.i18nHtml];
+    if (v !== undefined) el.innerHTML = v;
+  });
+  document.getElementById("langBtn").textContent = lang === "zh" ? "EN" : "中文";
+  if (state === "idle" && !typing) resetCaption();
+}
+document.getElementById("langBtn").addEventListener("click", () => applyLang(LANG === "zh" ? "en" : "zh"));
+
+/* ── 荆棘引擎（移植 waveform.py::_ThornView）──────────── */
+const N = 32;
+const amps = new Array(N).fill(0);
+let smooth = 0;
+
+function drawThorns(ctx, w, h, tint) {
+  ctx.clearRect(0, 0, w, h);
+  const seg = w / N, base = h * 0.62;
+  for (let i = 0; i < N; i++) {
+    const amp = amps[i];
+    if (amp < 0.01) continue;
+    const cx = i * seg + seg / 2;
+    const half = seg * 0.45;
+    const lean = seg * 0.25 * (i % 2 === 0 ? 1 : -1);
+    const peak = amp * h * 0.55;
+    // 辉光层
+    if (amp > 0.06) drawThorn(ctx, cx, base, half * 0.7, lean, peak * 1.6, h,
+      rgba(tint, 0.05 * amp), null);
+    // 主体
+    drawThorn(ctx, cx, base, half, lean, peak, h,
+      rgba(tint, 0.15 + 0.85 * amp), rgba(tint, 0.15 + 0.85 * amp));
+  }
+  // 藤蔓基线
+  vine(ctx, w, h, seg, base, tint);
+}
+
+function drawThorn(ctx, cx, base, half, lean, height, H, fill, stroke) {
+  const p = (x, dyUp) => [x, base - dyUp]; // AppKit y 向上 → canvas 向下
+  ctx.beginPath();
+  ctx.moveTo(...p(cx - half * 0.7, 0));
+  ctx.bezierCurveTo(...p(cx - half * 1.5, height * 0.3),
+                    ...p(cx - half * 0.4, height * 0.6),
+                    ...p(cx + lean * 0.3, height));
+  ctx.lineTo(...p(cx + lean * 0.3, height * 0.98));
+  ctx.bezierCurveTo(...p(cx + half * 0.4, height * 0.6),
+                    ...p(cx + half * 1.5, height * 0.3),
+                    ...p(cx + half * 0.7, 0));
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+
+function vine(ctx, w, h, seg, base, tint) {
+  const path = (lw, alpha) => {
+    ctx.beginPath();
+    ctx.moveTo(0, base);
+    for (let i = 0; i < N; i++) {
+      const cx = i * seg + seg / 2, dy = h * 0.04 * amps[i];
+      ctx.bezierCurveTo(cx + seg * 0.25, base - dy, cx + seg * 0.25, base - dy,
+                        (i + 1) * seg, base);
+    }
+    ctx.strokeStyle = rgba(tint, alpha); ctx.lineWidth = lw; ctx.stroke();
+  };
+  path(4, 0.05);
+  path(1.2, 0.25);
+}
+
+function rgba(tint, a) {
+  const r = Math.round(237 + (157 - 237) * tint);
+  const g = Math.round(237 + (143 - 237) * tint);
+  const b = Math.round(239 + (240 - 239) * tint);
+  return `rgba(${r},${g},${b},${Math.min(a, 1)})`;
+}
+
+/* ── Hero 演示状态机 ──────────────────────────────────── */
+const panel = document.getElementById("panel");
+const cv = document.getElementById("cv");
+const ctx2d = cv.getContext("2d");
+const hintEl = document.getElementById("demoHint");
+const timerEl = document.getElementById("timer");
+const capEl = document.getElementById("capText");
+
+let state = "idle";           // idle | holding | decay
+let holdStart = 0;
+let pointerVel = 0, lastPX = 0, lastPT = 0;
+let typing = false;
+let rafId = null;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function fit() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr;
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", () => { fit(); if (reduced) frame(performance.now()); });
+
+function speechEnv(now) { // 合成语音包络：多正弦 + 随机游走
+  return Math.max(0, Math.min(1,
+    0.45 + 0.28 * Math.sin(now / 130) + 0.18 * Math.sin(now / 47 + 1.3)
+    + 0.12 * Math.sin(now / 17)));
+}
+
+function targetAmp(now) {
+  if (state === "holding") {
+    const env = speechEnv(now);
+    return Math.min(1, Math.max(0.08, env * (0.55 + Math.min(pointerVel * 0.02, 0.5))));
+  }
+  if (state === "decay") return 0;
+  return 0.05 + 0.03 * Math.sin(now / 900) + 0.02 * Math.sin(now / 331); // 呼吸
+}
+
+function frame(now) {
+  rafId = requestAnimationFrame(frame);
+  const rect = cv.getBoundingClientRect();
+  if (rect.bottom < -100 || rect.top > innerHeight + 100) return; // 视口外省流
+
+  let tint = 0;
+  if (state === "holding") {
+    tint = 1;
+    smooth = smooth * 0.55 + targetAmp(now) * 0.45;
+    timerEl.textContent = fmt((now - holdStart) / 1000);
+  } else if (state === "decay") {
+    smooth *= 0.82; tint = 0.35;
+    if (smooth < 0.02) { state = "idle"; }
+  } else {
+    smooth = smooth * 0.85 + targetAmp(now) * 0.15;
+  }
+  amps.shift(); amps.push(smooth);
+  pointerVel *= 0.9;
+
+  drawThorns(ctx2d, cv.clientWidth, cv.clientHeight, tint);
+}
+function fmt(s) { s = Math.floor(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+function startHold() {
+  if (state !== "idle" || typing) return;
+  state = "holding"; holdStart = performance.now();
+  panel.classList.add("holding"); panel.classList.remove("decay");
+  hintEl.textContent = I18N[LANG]["demo.rec"];
+}
+function endHold() {
+  if (state !== "holding") return;
+  state = "decay";
+  panel.classList.remove("holding"); panel.classList.add("decay");
+  hintEl.textContent = I18N[LANG]["demo.hold"];
+  setTimeout(() => typeTranscript(), 380);
+}
+panel.addEventListener("pointerdown", e => { e.preventDefault(); startHold(); });
+addEventListener("pointerup", () => endHold());
+panel.addEventListener("pointermove", e => {
+  const t = performance.now();
+  if (lastPT && state === "holding")
+    pointerVel = Math.min(30, pointerVel + Math.abs(e.clientX - lastPX) / Math.max(t - lastPT, 1) * 8);
+  lastPX = e.clientX; lastPT = t;
+});
+addEventListener("keydown", e => {
+  if (e.code === "Space" && !e.repeat && !typing &&
+      /(INPUT|TEXTAREA|BUTTON)/.test(document.activeElement.tagName) === false) {
+    const r = panel.getBoundingClientRect();
+    if (r.top < innerHeight && r.bottom > 0) { e.preventDefault(); startHold(); }
+  }
+});
+addEventListener("keyup", e => { if (e.code === "Space") endHold(); });
+
+/* ── scramble 打字转写 ── */
+const SCRAMBLE = "▓▒░#/\\_—";
+function typeTranscript() {
+  typing = true;
+  const text = I18N[LANG]["demo.caption"];
+  capEl.textContent = "";
+  if (reduced) { capEl.textContent = text; typing = false; return; }
+  let i = 0;
+  const tick = setInterval(() => {
+    if (i >= text.length) { clearInterval(tick); typing = false; return; }
+    let out = text.slice(0, ++i);
+    if (i < text.length) out += SCRAMBLE[(Math.random() * SCRAMBLE.length) | 0];
+    capEl.textContent = out;
+  }, 34);
+}
+function resetCaption() { capEl.textContent = ""; }
+
+/* ── 三态轮播 ── */
+const cards = [0, 1, 2].map(i => document.getElementById("stCard" + i));
+let stIdx = 0;
+setInterval(() => {
+  cards.forEach(c => c.classList.remove("on"));
+  stIdx = (stIdx + 1) % 3;
+  cards[stIdx].classList.add("on");
+}, 2200);
+
+/* ── 词典纠正序列 ── */
+const dicLive = document.getElementById("dicLive");
+function playDic() {
+  dicLive.classList.remove("play");
+  void dicLive.offsetWidth; // 重置过渡
+  dicLive.classList.add("play");
+}
+document.getElementById("dicReplay").addEventListener("click", playDic);
+new IntersectionObserver((es, ob) => {
+  es.forEach(e => { if (e.isIntersecting) { setTimeout(playDic, 350); ob.unobserve(e.target); } });
+}, { threshold: 0.5 }).observe(dicLive);
+
+const revealOb = new IntersectionObserver((es) => {
+  es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("grown"); revealOb.unobserve(e.target); } });
+}, { threshold: 0.15 });
+document.querySelectorAll(".reveal").forEach(el => revealOb.observe(el));
+
+/* ── 脊线滚动进度 ── */
+const spineFill = document.getElementById("spineFill");
+addEventListener("scroll", () => {
+  const max = document.documentElement.scrollHeight - innerHeight;
+  spineFill.style.transform = `scaleY(${max > 0 ? scrollY / max : 0})`;
+}, { passive: true });
+
+/* ── 复制安装命令 ── */
+const copyChip = document.getElementById("copyChip");
+const copyLabel = document.getElementById("copyLabel");
+copyChip.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText("bash guide.sh install"); }
+  catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = "bash guide.sh install"; document.body.appendChild(ta);
+    ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  copyLabel.textContent = I18N[LANG]["inst.copied"];
+  copyChip.classList.add("ok");
+  setTimeout(() => {
+    copyLabel.textContent = I18N[LANG]["inst.copy"];
+    copyChip.classList.remove("ok");
+  }, 1400);
+});
+
+/* ── 启动 ── */
+applyLang(LANG);
+fit();
+if (reduced) {
+  for (let i = 0; i < N; i++) amps[i] = 0.06 + 0.03 * Math.sin(i);
+  drawThorns(ctx2d, cv.clientWidth, cv.clientHeight, 0);
+} else {
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
