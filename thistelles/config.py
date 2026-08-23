@@ -7,6 +7,7 @@ CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 DEFAULTS = {
     "hotkey": "cmd+shift+'",
     "language": "zh-CN",
+    "ui_language": "zh-CN",
     "history_limit": 100,
     "waveform_width": 280,
     "waveform_height": 36,
@@ -25,6 +26,7 @@ DEFAULTS = {
 OUTPUT_MODES = ["paste", "both", "clipboard"]
 HOTKEY_MODES = ["toggle", "ptt"]
 MODEL_VARIANTS = ["fp16", "q4"]
+UI_LANGUAGES = ["zh-CN", "en-US"]
 
 OUTPUT_MODES = ["paste", "both", "clipboard"]
 HOTKEY_MODES = ["toggle", "ptt"]
@@ -69,6 +71,11 @@ def load():
         cfg["model_idle_unload_min"] = float(cfg["model_idle_unload_min"])
         if cfg.get("model_variant") not in MODEL_VARIANTS:
             cfg["model_variant"] = DEFAULTS["model_variant"]
+        if cfg.get("ui_language") not in UI_LANGUAGES:
+            # 迁移：拆分前 ui_language 不存在，识别语言 en-US 的老用户继承显示语言
+            cfg["ui_language"] = (
+                "en-US" if data.get("language") == "en-US" else DEFAULTS["ui_language"]
+            )
         return cfg
     except (json.JSONDecodeError, OSError, TypeError):
         return dict(DEFAULTS)
@@ -78,3 +85,19 @@ def save(cfg):
     _ensure_dir()
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def values_match(def_value, stored) -> bool:
+    """设置选项与存储值的匹配：数值跨类型容差（2 == "2.0"），其余精确。
+
+    背景：load() 会把部分数值键规范为 float 存储，而 UI 选项定义为 int，
+    字符串直接比较会导致「回显与实际行为不符」。
+    """
+    if isinstance(def_value, bool):
+        return str(def_value).lower() == str(stored).lower()
+    if isinstance(def_value, (int, float)):
+        try:
+            return float(stored) == float(def_value)
+        except (TypeError, ValueError):
+            return False
+    return str(def_value) == str(stored)

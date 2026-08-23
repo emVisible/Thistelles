@@ -59,5 +59,30 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.load(), dict(cfg.DEFAULTS))
 
 
+class ValuesMatchTest(unittest.TestCase):
+    """设置回显与实际行为一致性的关键：数值跨类型匹配。"""
+
+    def test_int_def_vs_float_stored(self):
+        # load() 规范化后的 3.0 必须能命中 UI 选项 int 3
+        self.assertTrue(cfg.values_match(3, "3.0"))
+        self.assertTrue(cfg.values_match(30, "30.0"))
+
+    def test_mismatch(self):
+        self.assertFalse(cfg.values_match(2, "3.0"))
+        self.assertFalse(cfg.values_match(0, ""))
+
+    def test_string_exact(self):
+        self.assertTrue(cfg.values_match("zh-CN", "zh-CN"))
+        self.assertFalse(cfg.values_match("auto", "zh-CN"))
+
+    def test_bool(self):
+        self.assertTrue(cfg.values_match(True, "True"))
+        self.assertFalse(cfg.values_match(False, "true1"))
+
+    def test_bad_stored_returns_false(self):
+        self.assertFalse(cfg.values_match(5, None))
+        self.assertFalse(cfg.values_match(5, "abc"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 [project]
 name = "thistelles"
-version = "0.11.0"
+version = "0.12.0"
 description = "macOS 全局快捷键语音输入 — 录音即转文字，直达剪贴板"
 readme = "README.md"
 authors = [
@@ -11,7 +11,9 @@ requires-python = ">=3.10"
 dependencies = [
     "pyaudio>=0.2.14",
     "rumps>=0.4.0",
-    "pynput>=1.7.6",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-ApplicationServices>=10.0",
+    "pyobjc-framework-AVFoundation>=10.0",
     "pyperclip>=1.8.2",
     "opencc-python-reimplemented>=0.1.7",
     "mlx-whisper>=0.4.0",

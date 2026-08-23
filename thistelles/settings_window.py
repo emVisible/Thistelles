@@ -6,8 +6,8 @@
   业务规则仍归属各自模块（层间职责分离）
 - 所有配置变更统一经 app.apply_config(key, value) 路由——
   该方法是应用侧副作用与持久化的单一真相源
-- 快捷键捕获使用 NSEvent 本地监听（窗口聚焦期），无需辅助功能权限，
-  且捕获期间挂起全局热键，避免组合键误触发录音切换
+- 快捷键捕获使用 Quartz CGEventTap 全局吞键（hotkeys.CaptureTap），
+  不依赖窗口焦点，捕获期间其它应用不会收到按键；切换
 
 PyObjC 注意事项：NSObject 子类上「必需位置参数 > 0 且不以 _ 结尾」的方法
 会被当作 ObjC 选择器做原型校验——带参数的纯辅助函数必须放在模块层。
@@ -15,18 +15,24 @@ PyObjC 注意事项：NSObject 子类上「必需位置参数 > 0 且不以 _ �
 
 import logging
 import objc
+import os
+import subprocess
 import webbrowser
 from AppKit import (
     NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
     NSBackingStoreBuffered,
     NSButton,
     NSColor,
-    NSEvent,
-    NSEventMaskKeyDown,
+    NSFloatingWindowLevel,
     NSFont,
+    NSImage,
     NSMakeRect,
     NSPopUpButton,
     NSRadioButton,
+    NSRunningApplication,
+    NSSwitchButton,
     NSTextField,
     NSView,
     NSWindow,
@@ -37,15 +43,22 @@ from AppKit import (
 from Foundation import NSObject, NSMakePoint
 
 from . import config as cfg
+from . import hotkeys
+from . import inserter as ins
 from . import recorder
 from . import vocab
 from .keymap import (
-    base_character,
+    base_char_from_vk,
     canonical_hotkey,
+    flags_to_mods,
     is_cancel_keycode,
-    modifiers_from_flags,
     symbol_for,
 )
+
+try:
+    from AppKit import NSApplicationActivateIgnoringOtherApps
+except ImportError:  # 旧系统兜底
+    NSApplicationActivateIgnoringOtherApps = 1 << 1
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +85,10 @@ POPUP_DEFS = {
         ("Русский", "ru"),
         ("Português", "pt"),
     ],
+    "ui_language": [
+        ("中文", "zh-CN"),
+        ("English", "en-US"),
+    ],
     "history_limit": [("50", 50), ("100", 100), ("200", 200)],
     "auto_stop_silence_s": [("关闭", 0), ("2 秒", 2), ("3 秒", 3), ("5 秒", 5)],
     "max_record_s": [("5 分钟", 300), ("10 分钟", 600), ("20 分钟", 1200)],
@@ -86,12 +103,16 @@ POPUP_DEFS = {
 ROW_LABELS = {
     "output_mode": "输出方式",
     "language": "识别语言",
+    "ui_language": "显示语言",
     "history_limit": "历史上限",
     "auto_stop_silence_s": "静音自停",
     "max_record_s": "单次上限",
     "model_idle_unload_min": "闲置卸载",
     "__mic__": "麦克风设备",
 }
+
+APP_NAME = "Thistelles"
+APP_BUNDLE = "/Applications/Thistelles.app"
 
 
 # ── 模块层构建助手（不进入 ObjC 类字典）─────────────────────────
@@ -118,10 +139,49 @@ def _new_radio(title, x, y, w):
     return b
 
 
+def _new_checkbox(title, x, y, w):
+    b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, 24))
+    b.setButtonType_(NSSwitchButton)
+    b.setTitle_(title)
+    return b
+
+
+def _login_item_enabled() -> bool:
+    try:
+        out = subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to get the name of every login item'],
+            capture_output=True, text=True, timeout=3,
+        )
+        return APP_NAME in (out.stdout or "").split()
+    except Exception:
+        logger.debug("settings: login item query failed", exc_info=True)
+        return False
+
+
+def _login_set_enabled(enabled: bool) -> bool:
+    if enabled:
+        script = (
+            'tell application "System Events" to make login item at end '
+            f'with properties {{path:"{APP_BUNDLE}", hidden:true}}'
+        )
+    else:
+        script = f'tell application "System Events" to delete login item "{APP_NAME}"'
+    try:
+        r = subprocess.run(
+            ["osascript", "-e", script], capture_output=True, timeout=3
+        )
+        return r.returncode == 0
+    except Exception:
+        logger.debug("settings: login item toggle failed", exc_info=True)
+        return False
+
+
 def _new_popup(panel, key, x, y, w=310):
     p = NSPopUpButton.alloc().initWithFrame_pullsDown_(
         NSMakeRect(x, y, w, 26), False
     )
+    panel.popups[key] = p
 
     if key == "__mic__":
         p.addItemWithTitle_("系统默认")
@@ -134,7 +194,7 @@ def _new_popup(panel, key, x, y, w=310):
             p.addItemWithTitle_(name)
             names.append(dev["name"])
         panel.mic_device_names = names
-        panel.popup_values[key] = [""] + names
+        panel.popupValues[key] = [""] + names
 
         current = str(panel.app.config_get("input_device_name", "")).strip().lower()
         lowered = [n.lower()[:32] for n in names]
@@ -147,9 +207,10 @@ def _new_popup(panel, key, x, y, w=310):
         defs = POPUP_DEFS[key]
         for text, _v in defs:
             p.addItemWithTitle_(text)
-        current = str(panel.app.config_get(key, ""))
+        panel.popupValues[key] = [v for _t, v in defs]
+        current = panel.app.config_get(key, "")
         for i, (_t, v) in enumerate(defs):
-            if str(v) == current:
+            if cfg.values_match(v, current):  # 数值跨类型容差，回显与行为一致
                 p.selectItemAtIndex_(i)
                 break
 
@@ -178,6 +239,7 @@ class SettingsPanel(NSObject):
         self.window = None
         self.hotkeyField = None
         self.rerecordBtn = None
+        self.resetHotkeyBtn = None
         self.popups = {}          # config_key -> NSPopUpButton
         self.popupValues = {}     # config_key -> [存储值]
         self.mic_device_names = []
@@ -188,24 +250,76 @@ class SettingsPanel(NSObject):
         self.variantQ4Btn = None
         self.keyToggleBtn = None
         self.keyPttBtn = None
+        self.loginToggleBtn = None
+        self.axStatus = None
+        self.axBtn = None
 
         self.capturing = False
-        self.monitor = None
+        self.captureListener = None
+        self._policy_promoted = False
         return self
 
     # ── 对外入口 ─────────────────────────────────────────────────
 
     def show(self):
+        # 菜单栏应用是 accessory 政策，macOS 会静默拒绝其激活请求；
+        # 临时提升为 regular 再激活（窗口级浮层 + 焦点双保险），关窗时还原
+        self._promote_policy()
+        self._activate_app()
         if self.window is not None:
             self.window.makeKeyAndOrderFront_(None)
-            self._activate_app()
             return
-        self.window = self._build_window()
-        self.window.center()
-        self.window.makeKeyAndOrderFront_(None)
-        self._activate_app()
+        win = self._build_window()
+        win.setReleasedWhenClosed_(False)  # 面板持有引用，防止重复开窗 use-after-free
+        win.setLevel_(NSFloatingWindowLevel)  # 打开期间置顶，不被其它应用遮挡
+        win.setDelegate_(self)
+        win.center()
+        self.window = win
+        win.orderFrontRegardless()
+        win.makeKeyAndOrderFront_(None)
+
+    def windowWillClose_(self, notification):
+        self.window = None  # 下次打开重建，控件状态与配置重新同步
+        self._demote_policy()
+
+    def _promote_policy(self):
+        try:
+            app = NSApplication.sharedApplication()
+            if int(app.activationPolicy()) != NSApplicationActivationPolicyRegular:
+                app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+                self._policy_promoted = True
+            # accessory 进程没有 Dock 图标缓存；提升为 regular 后程序化注入，
+            # 避免 Dock/任务切换显示空白图标
+            if app.applicationIconImage() is None:
+                icon_path = os.path.join(
+                    os.path.dirname(__file__), "assets", "mic_idle.png"
+                )
+                img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+                if img is not None:
+                    app.setApplicationIconImage_(img)
+        except Exception:
+            logger.debug("settings: policy promote failed", exc_info=True)
+
+    def _demote_policy(self):
+        if not self._policy_promoted:
+            return
+        self._policy_promoted = False
+        try:
+            NSApplication.sharedApplication().setActivationPolicy_(
+                NSApplicationActivationPolicyAccessory
+            )
+        except Exception:
+            logger.debug("settings: policy demote failed", exc_info=True)
 
     def _activate_app(self):
+        try:  # macOS 14+ 推荐；必须带 IgnoringOtherApps
+            ok = NSRunningApplication.currentApplication().activateWithOptions_(
+                NSApplicationActivateIgnoringOtherApps
+            )
+            if ok:
+                return
+        except Exception:
+            pass
         try:
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         except Exception:
@@ -247,7 +361,7 @@ class SettingsPanel(NSObject):
         self.hotkeyField = NSTextField.textFieldWithString_(
             symbol_for(str(self.app.config_get("hotkey", "")))
         )
-        self.hotkeyField.setFrame_(NSMakeRect(140, state["y"], 168, 26))
+        self.hotkeyField.setFrame_(NSMakeRect(140, state["y"], 128, 26))
         self.hotkeyField.setEditable_(False)
         self.hotkeyField.setBordered_(True)
         self.hotkeyField.setFont_(
@@ -255,15 +369,21 @@ class SettingsPanel(NSObject):
         )
         content.addSubview_(self.hotkeyField)
 
-        self.rerecordBtn = _new_button("重新录制", 320, state["y"], 96, 26)
+        self.rerecordBtn = _new_button("重新录制", 276, state["y"], 84, 26)
         self.rerecordBtn.setTarget_(self)
         self.rerecordBtn.setAction_("startCapture:")
         content.addSubview_(self.rerecordBtn)
+
+        self.resetHotkeyBtn = _new_button("恢复默认", 368, state["y"], 92, 26)
+        self.resetHotkeyBtn.setTarget_(self)
+        self.resetHotkeyBtn.setAction_("resetHotkey:")
+        content.addSubview_(self.resetHotkeyBtn)
         advance()
 
         # ── 输出与语言 ──
         _add_popup_row(self, content, state, "output_mode")
         _add_popup_row(self, content, state, "language")
+        _add_popup_row(self, content, state, "ui_language")
         gap()
 
         # ── 精度模式（radio pair）──
@@ -330,12 +450,37 @@ class SettingsPanel(NSObject):
         _add_popup_row(self, content, state, "history_limit")
         gap()
 
+        # ── 开机自启 ──
+        add_label_row("开机自启")
+        self.loginToggleBtn = _new_checkbox("", 140, state["y"], 200)
+        self.loginToggleBtn.setTarget_(self)
+        self.loginToggleBtn.setAction_("loginChanged:")
+        self.loginToggleBtn.setState_(1 if _login_item_enabled() else 0)
+        content.addSubview_(self.loginToggleBtn)
+        advance()
+
+        # ── 辅助功能权限提示（全局快捷键依赖）──
+        ax_ok = ins.accessibility_trusted(prompt=False)
+        ax_label = "辅助功能：已授权" if ax_ok else \
+            "辅助功能未授权——请在列表中勾选 Thistelles"
+        self.axStatus = NSTextField.labelWithString_(ax_label)
+        self.axStatus.setFrame_(NSMakeRect(24, 52, 320, 16))
+        self.axStatus.setFont_(NSFont.systemFontOfSize_(12))
+        self.axStatus.setTextColor_(
+            NSColor.secondaryLabelColor() if ax_ok else NSColor.systemRedColor()
+        )
+        content.addSubview_(self.axStatus)
+        if not ax_ok:
+            self.axBtn = _new_button("前往授权", 368, 48, 92, 22)
+            self.axBtn.setTarget_(self)
+            self.axBtn.setAction_("openAccessibility:")
+            content.addSubview_(self.axBtn)
+
         # ── 底部链接行 ──
         link_y = 22
         bx = 20
         for title, sel in (
-            ("编辑热词", "openHotwords:"),
-            ("纠正词典", "openCorrections:"),
+            ("自定义词典", "openCorrections:"),
             ("数据目录", "openDataDir:"),
             ("⭐ GitHub", "openGitHub:"),
         ):
@@ -376,59 +521,84 @@ class SettingsPanel(NSObject):
         value = "ptt" if sender == self.keyPttBtn else "toggle"
         self.app.apply_config("hotkey_mode", value)
 
+    def loginChanged_(self, sender):
+        enabled = int(sender.state()) == 1
+        if not _login_set_enabled(enabled):
+            sender.setState_(0 if enabled else 1)  # 失败回滚勾选态
+            logger.warning("settings: login item toggle failed")
+
     # ── 快捷键捕获 ───────────────────────────────────────────────
+    # 成熟做法（Raycast/Superwhisper 同类）：捕获期全局吞键——
+    # 1) 不依赖本窗口是否聚焦（accessory 应用激活常被拒，本地监听收不到）
+    # 2) 按键不会泄漏给其它应用，避免误触系统/其它 app 快捷键
 
     def startCapture_(self, sender):
         if self.capturing:
-            self._end_capture(cancel=True)
+            self._finish_capture(cancel=True)
             return
         self.capturing = True
         self.rerecordBtn.setTitle_("按下组合键… Esc 取消")
         self.hotkeyField.setStringValue_("…")
         self.app.suspend_global_hotkeys()
-        self.monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-            NSEventMaskKeyDown, self.captureHandler_
+        self.captureListener = hotkeys.CaptureTap(self._capture_key)
+        if not self.captureListener.start():
+            self._finish_capture(cancel=True)
+            self.hotkeyField.setStringValue_("捕获失败（辅助功能权限？）")
+            return
+
+    def _capture_key(self, vk: int, flags: int):
+        """tap 线程回调：只做纯计算，UI 更新经主线程选择器落地。"""
+        if is_cancel_keycode(vk):
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "cancelCapture:", None, False
+            )
+            return
+        mods = flags_to_mods(flags)
+        ch = base_char_from_vk(vk)
+        if not mods or not ch:
+            return  # 必须携带至少一个修饰键；事件已被 tap 吞掉
+        hk = canonical_hotkey(mods, ch)
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyCapture:", hk, False
         )
 
-    def captureHandler_(self, event):
+    def applyCapture_(self, hk):
+        """主线程落地：回显 + 持久化 + 重挂全局热键。"""
         if not self.capturing:
-            return event
-
-        if is_cancel_keycode(int(event.keyCode())):
-            self._end_capture(cancel=True)
-            return None  # 吞掉 Esc，避免关闭窗口
-
-        mods = modifiers_from_flags(int(event.modifierFlags()))
-        ch = base_character(event)
-        if not mods or not ch:
-            return None  # 必须携带至少一个修饰键；吞掉无效按键
-
-        hk = canonical_hotkey(mods, ch)
+            return
         self.hotkeyField.setStringValue_(symbol_for(hk))
         self.app.apply_config("hotkey", hk)
+        self._finish_capture(cancel=False)
 
-        self._end_capture(cancel=False)
-        return None  # 吞掉本次按键事件
+    def resetHotkey_(self, sender):
+        """恢复出厂默认快捷键；捕获进行中则先取消捕获。"""
+        if self.capturing:
+            self._finish_capture(cancel=True)
+        default = cfg.DEFAULTS["hotkey"]
+        self.hotkeyField.setStringValue_(symbol_for(default))
+        self.app.apply_config("hotkey", default)
 
-    def _end_capture(self, cancel=False):
-        if self.monitor is not None:
+    def cancelCapture_(self, _):
+        if not self.capturing:
+            return
+        self.hotkeyField.setStringValue_(
+            symbol_for(str(self.app.config_get("hotkey", "")))
+        )
+        self._finish_capture(cancel=True)
+
+    def _finish_capture(self, cancel=False):
+        if self.captureListener is not None:
             try:
-                NSEvent.removeMonitor_(self.monitor)
+                self.captureListener.stop()
             except Exception:
                 pass
-            self.monitor = None
+            self.captureListener = None
         self.capturing = False
         self.rerecordBtn.setTitle_("重新录制")
         if cancel:
-            self.hotkeyField.setStringValue_(
-                symbol_for(str(self.app.config_get("hotkey", "")))
-            )
             self.app.resume_global_hotkeys()
 
     # ── 底部链接 ─────────────────────────────────────────────────
-
-    def openHotwords_(self, sender):
-        vocab.reveal_hotwords()
 
     def openCorrections_(self, sender):
         vocab.reveal_corrections()
@@ -440,6 +610,21 @@ class SettingsPanel(NSObject):
 
     def openGitHub_(self, sender):
         webbrowser.open(GITHUB_URL)
+
+    def openAccessibility_(self, sender):
+        # 先以弹窗方式正式请求一次：让本应用注册进系统「辅助功能」列表，
+        # 否则用户在设置面板里找不到可勾选的条目
+        try:
+            ins.accessibility_trusted(prompt=True)
+        except Exception:
+            logger.debug("settings: ax prompt failed", exc_info=True)
+        try:
+            subprocess.Popen(
+                ["open",
+                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]
+            )
+        except Exception:
+            logger.debug("settings: open AX pane failed", exc_info=True)
 
 
 def show_settings(app) -> SettingsPanel:

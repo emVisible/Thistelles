@@ -1,7 +1,7 @@
 """Deliver transcribed text: copy to clipboard and/or paste at cursor.
 
 Paste is simulated with a synthetic Cmd+V via the Quartz CGEvent API,
-which requires Accessibility permission (already needed by pynput).
+which requires Accessibility permission (already required for global hotkeys).
 """
 
 import logging
@@ -27,17 +27,35 @@ except Exception:
     _QUARTZ_OK = False
 
 
+_AX_PROMPT = None
+try:
+    from ApplicationServices import (
+        AXIsProcessTrustedWithOptions,
+        kAXTrustedCheckOptionPrompt,
+    )
+    _AX_PROMPT = (AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt)
+except ImportError:
+    pass  # 依赖缺失：下方降级为不可用，并以 warning 提示
+
+
 def accessibility_trusted(prompt: bool = True) -> bool:
-    """Check (and optionally prompt for) Accessibility permission."""
-    try:
-        from ApplicationServices import (
-            AXIsProcessTrustedWithOptions,
-            kAXTrustedCheckOptionPrompt,
+    """Check (and optionally prompt for) Accessibility permission.
+
+    prompt=True 会弹出系统授权框并把应用注册进「辅助功能」列表。
+    """
+    if _AX_PROMPT is None:
+        # 依赖缺失时无法检测也无法请求——按未授权处理并大声说出来，
+        # 绝不能静默 False 让用户在系统设置里找不到原因
+        logger.warning(
+            "accessibility: ApplicationServices unavailable "
+            "(pyobjc-framework-ApplicationServices missing?) — treat as untrusted"
         )
-        options = {kAXTrustedCheckOptionPrompt: prompt}
+        return False
+    try:
+        options = {kAXTrustedCheckOptionPrompt: bool(prompt)}
         return bool(AXIsProcessTrustedWithOptions(options))
     except Exception:
-        logger.warning("paste: cannot check accessibility, assuming untrusted")
+        logger.warning("accessibility: check failed", exc_info=True)
         return False
 
 

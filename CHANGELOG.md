@@ -1,5 +1,75 @@
 Changelog
 
+## [0.12.0] - 2026-08-23
+
+### Fixed
+
+- **Hotkey press crashed the whole app (SIGTRAP)**: pynput's darwin backend
+  calls TSM/HIToolbox APIs from its listener thread, which newer macOS
+  enforces as main-thread-only (`dispatch_assert_queue_fail`). Replaced with
+  a Quartz CGEventTap layer (`hotkeys.py`) that only touches CGEvent fields
+- **Toggle mode behaved like push-to-talk**: the release callback was wired
+  unconditionally, so key-up queued `ptt_up` and stopped the recording right
+  after key-down started it; now wired only in ptt mode, with consumer-side
+  mode gating as defense in depth (dispatch regression tests added)
+- Hotkey stopped working entirely after repeated settings changes: the tap
+  was destroyed/recreated per change until macOS refused creation; replaced
+  by one persistent tap updated in place (`update_hotkey`)
+- Settings popup selection never matched stored values for float-normalized
+  keys (silence auto-stop / idle unload displayed defaults while behaving
+  differently): numeric-tolerant matching via `config.values_match`
+- Idle-unload changes took effect only after the next transcription:
+  `apply_config` now reschedules the timer immediately (`apply_idle_unload`)
+- History pin dialog raised `NameError` on leftover dead code
+- Settings window opened behind other apps: temporary activation-policy
+  promotion + floating window level + `orderFrontRegardless`
+- Hotkey re-record capture required window focus and leaked keystrokes;
+  capture now runs through a global swallowing event tap (focus-independent)
+- Second launch could reuse freed window state (`releasedWhenClosed=false`);
+  stale `_capture_listener` cleanup removed from `_cleanup`
+- Startup progress-bar noise from huggingface_hub/mlx suppressed
+  (`HF_HUB_DISABLE_PROGRESS_BARS` / `TQDM_DISABLE`); real downloads still
+  show progress
+- Accessibility check silently degraded on missing ApplicationServices
+  binding: dependency declared explicitly, failures logged loudly
+
+### Added
+
+- Custom dictionary: hotwords merged into `corrections.md` - `- wrong -> right`
+  deterministic replacement plus bare terms injected as recognition context;
+  Settings exposes a single entry point (legacy hotwords files no longer read)
+- Display language setting - UI text Chinese/English independent of
+  recognition language, applies immediately
+- Launch-at-login checkbox in Settings (replaces guide.sh login command)
+- Accessibility status row in Settings with one-click authorization jump;
+  formal AX permission request at startup so the app registers in the list
+- "Restore default" button for the record hotkey
+- Build fingerprint in startup log (`build=xxxxxxxx`) to verify running code
+- CLI to .app forwarding when launched without bundle identity
+  (`THISTELLES_FORCE_CLI=1` opts out)
+- `guide.sh doctor` self-diagnosis command: version drift, process/instance
+  count, dependency integrity, accessibility grant, hotkey registration state,
+  microphone permission, bundle identity and icon declaration - each historical
+  incident class is now a checkable item
+- Structural wiring tests (pure AST, platform-neutral): i18n key parity,
+  popup value-table registration, apply_config branch coverage against
+  DEFAULTS, and settings action-selector existence
+
+- App icon composed at build time from the mic glyph onto a rounded plate;
+  interpreter binary copied into the bundle (with its libpython) so TCC
+  prompts show Thistelles instead of Python3.12
+
+### Changed
+
+- guide.sh overhauled: arrow-key hierarchical TUI (up/down move,
+  right/Enter enter, left/Esc back), commands consolidated to
+  install/uninstall/models; uninstall distinguishes half (keep models & data)
+  vs full wipe with confirmation; non-interactive calls default to half
+- Main menu reduced to a three-state primary button (start / stop /
+  transcribing-cancel) plus history, settings and quit
+- pynput dependency removed in favor of pyobjc-framework-Quartz and
+  pyobjc-framework-ApplicationServices
+
 ## [0.11.0] - 2026-08-22
 
 ### Fixed

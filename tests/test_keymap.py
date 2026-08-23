@@ -49,5 +49,26 @@ class SymbolTest(unittest.TestCase):
         self.assertEqual(km.symbol_for("ctrl+up"), "⌃up")
 
 
+class BaseCharFromVkTest(unittest.TestCase):
+    def test_letters(self):
+        self.assertEqual(km.base_char_from_vk(0), "a")
+        self.assertEqual(km.base_char_from_vk(40), "k")
+
+    def test_digits_and_punct(self):
+        self.assertEqual(km.base_char_from_vk(18), "1")
+        self.assertEqual(km.base_char_from_vk(39), "'")
+        self.assertEqual(km.base_char_from_vk(49), " ")
+
+    def test_non_printable_none(self):
+        # Esc=53 / F5=96 / 方向键=123 等无基础字符
+        self.assertIsNone(km.base_char_from_vk(53))
+        self.assertIsNone(km.base_char_from_vk(96))
+        self.assertIsNone(km.base_char_from_vk(None))
+
+    def test_covers_printable_fallback(self):
+        for ch in km._PRINTABLE_FALLBACK:
+            self.assertIn(ch, set(km.VK_TO_CHAR.values()), ch)
+
+
 if __name__ == "__main__":
     unittest.main()

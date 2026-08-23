@@ -31,22 +31,17 @@ The core experience of Wispr Flow / Superwhisper, free and open source.
 - 🎯 **Insert at cursor** — simulated paste after transcription; clipboard-only mode also available
 - ⌨️ **Two key modes** — click-to-toggle or push-to-talk
 - 🌏 **Mixed zh/en speech** — automatic language detection, traditional→simplified conversion
-- 🏷️ **Hotwords** — proper-noun correction + context inheritance from previous clip
+- 🏷️ **Custom dictionary** — deterministic `wrong → right` correction + proper-noun context bias; improves with use
 - 📌 **History** — search, pin favorites (immune to trimming), one-click export
-- 🛟 **Fault-tolerant** — MLX failures auto-fall back to CPU engine; model downloads
-  fail over to a mirror endpoint automatically
+- 🛟 **Fault-tolerant** — model downloads fail over to a mirror endpoint automatically
 
 ## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/emVisible/Thistelles.git
 cd Thistelles
-bash guide.sh install          # build & install (interactive)
-thistelles                     # launch — mic icon appears in the menu bar
+bash guide.sh install          # all-in-one: build, install & launch from /Applications
 ```
-
-> Requires [uv](https://docs.astral.sh/uv/) and macOS 12+ (Apple Silicon).
-> Grant **Microphone** and **Accessibility** permissions when prompted.
 
 > Requires [uv](https://docs.astral.sh/uv/) and macOS 12+ (Apple Silicon).
 > Grant **Microphone** and **Accessibility** permissions when prompted.
@@ -55,23 +50,28 @@ thistelles                     # launch — mic icon appears in the menu bar
 
 1. Press `⌘⇧'` anywhere to start recording (release to stop in push-to-talk mode)
 2. Press again to stop — text lands per your output mode
-3. Cancel anytime from Settings → 取消 while transcribing
+3. One menu button, three states: idle「Start Recording」→ recording「Stop
+   Recording」→「Transcribing… Click to Cancel」(click while transcribing to abort;
+   to discard a clip, stop and cancel immediately)
 
 ### Settings
 
-Click **Settings…** in the menu to open a native panel — every change applies
-immediately: hotkey recorder with live feedback, key mode, output mode,
-language, precision, model quantization, microphone device, history cap,
-idle unload and silence auto-stop. Bottom links open `hotwords.md` and
-`corrections.md` for vocabulary tuning.
+Click **Settings** in the menu to open a native panel — every change applies
+immediately: hotkey recorder with live feedback (plus a one-click
+**restore default**), key mode, output mode, recognition language, display
+language (中文 / English), precision, model quantization, microphone device,
+history cap, idle unload, silence auto-stop, a **launch-at-login** checkbox,
+and an accessibility status row with a direct link to authorize. The
+**Custom Dictionary** link at the bottom opens `corrections.md` — see the
+guide in the [Chinese README](README.md).
 
 ### Common Commands
 
 ```bash
-bash guide.sh app              # install /Applications/Thistelles.app and launch
-bash guide.sh login enable     # launch at login
-bash guide.sh test             # run test suite
-bash guide.sh prefetch         # pre-download all models (~1.8GB)
+bash guide.sh install          # upgrade / reinstall: just run it again
+bash guide.sh models            # download models only (~1.8GB)
+bash guide.sh uninstall         # uninstall (interactive: keep or wipe models & data)
+bash guide.sh                   # interactive menu (doubles as status overview)
 ```
 
 ## ⚙️ Configuration
@@ -80,8 +80,9 @@ bash guide.sh prefetch         # pre-download all models (~1.8GB)
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `hotkey` | `cmd+shift+'` | Global hotkey (recordable from menu) |
-| `language` | `zh-CN` | `auto` detect, or zh-CN / en-US / ja / ko / de / fr / es / ru / pt (UI text is 中/English) |
+| `hotkey` | `cmd+shift+'` | Global hotkey (re-record via Settings) |
+| `language` | `zh-CN` | Recognition language: `auto` detect, or zh-CN / en-US / ja / ko / de / fr / es / ru / pt |
+| `ui_language` | `zh-CN` | Display (UI) language: `zh-CN` / `en-US`, switch in Settings |
 | `mode` | `base` | `base` fast / `max` accurate (large-v3-turbo) |
 | `output_mode` | `paste` | `paste` insert at cursor / `both` insert + keep clipboard / `clipboard` copy only |
 | `hotkey_mode` | `toggle` | `toggle` click / `ptt` hold-to-talk |
@@ -91,24 +92,86 @@ bash guide.sh prefetch         # pre-download all models (~1.8GB)
 | `model_variant` | `fp16` | Max model quantization: `fp16` (1.6GB) / `q4` (~800MB, slight accuracy cost) |
 | `input_device_name` | empty (system default) | Input device name substring; or pick via Settings → Microphone |
 | `history_limit` | `100` | History cap (pinned entries are never trimmed) |
+| `paste_delay_ms` | `120` | Delay before simulated paste so the target app settles (rarely tuned) |
+| `context_prompt` | `true` | Inject the tail of the previous transcript as recognition context (advanced) |
 
-Hotwords live in `~/.voice-input/hotwords.txt`, one term per line — effective on
-the very next recording.
+### Custom Dictionary
+
+Dictionary file: `~/.voice-input/corrections.md` (the **Custom Dictionary**
+button in Settings opens it). Changes apply on the very next recording — no
+restart needed. Two entry types:
+
+```markdown
+# 1. Correction: deterministic replacement after transcription
+#    (format: - wrong → right; no inline comments — the whole line counts)
+- 隐形千疑 → 引擎迁移
+- wrong -> right
+
+# 2. Noun bias: bare terms injected into recognition context
+- Thistelles
+- MLX
+```
+
+Tips:
+
+- **Add a correction every time a word comes out wrong** — deterministic
+  replacement beats any prompt trick
+- The right side of a correction also feeds noun bias automatically; proper
+  nouns with no fixed mis-transcription can be bare entries
+- Replacements run top to bottom — order longer fixes before shorter ones
+- Lines starting with `#` are comments; legacy `hotwords.txt` / `hotwords.md`
+  files are no longer read — merge them into the dictionary manually
 
 ## 🔧 Troubleshooting
+
+Run the self-diagnosis first — most known failure classes (version drift,
+missing deps, authorization state, hotkey registration) report their own fix:
+
+```bash
+bash guide.sh doctor
+```
 
 <details>
 <summary><b>Hotkey not responding</b></summary>
 
-System Settings → Privacy & Security → **Accessibility** → enable Terminal
-(or Thistelles.app). Permissions bind to the app bundle once installed.
+System Settings → Privacy & Security → **Accessibility** → make sure
+**Thistelles** is enabled. The app requests authorization ~3 seconds after
+launch; you can also use the status row at the bottom of Settings.
+Permissions bind to the .app once granted. **No restart needed after
+granting** — the app retries hotkey registration every 8 seconds and
+self-heals once authorized.
+</details>
+
+<details>
+<summary><b>Prompt says「Python3.12」or the app is missing from the Accessibility list</b></summary>
+
+Older builds referenced an interpreter outside the bundle via symlink, which
+mis-attributed identity. Fixed: the interpreter now ships inside the bundle,
+so prompts and the list show **Thistelles** with its icon. Stale python3.12
+entries can be removed manually.
+</details>
+
+<details>
+<summary><b>Terminal prints「launched from /Applications/Thistelles.app」</b></summary>
+
+Normal forwarding: running `thistelles` from a shell has no app identity, so
+it relaunches via the installed bundle automatically. For CLI debugging:
+`THISTELLES_FORCE_CLI=1 thistelles`.
+</details>
+
+<details>
+<summary><b>How to verify I'm running the fixed build</b></summary>
+
+Check the first line of `~/.voice-input/app.log` for `build=xxxxxxxx` — it
+changes after each reinstall; together with `hotkey: ready` it means the
+latest code is active.
 </details>
 
 <details>
 <summary><b>Model download fails / restricted network</b></summary>
 
 Built-in redundancy: if the default HuggingFace endpoint fails, `hf-mirror.com`
-is used automatically. Manual prefetch: `bash guide.sh prefetch`. Behind a proxy?
+is used automatically. Manual prefetch: `bash guide.sh models`. Behind a proxy?
 Set `HF_ENDPOINT=https://hf-mirror.com` and `HF_HUB_DISABLE_XET=1`, then relaunch.
 </details>
 
@@ -121,7 +184,7 @@ Set `HF_ENDPOINT=https://hf-mirror.com` and `HF_HUB_DISABLE_XET=1`, then relaunc
 ## 🗺️ Roadmap
 
 - [ ] LLM post-processing pipeline (punctuation & filler cleanup, OpenAI-compatible BYOK)
-- [ ] Microphone device selection
+- [x] ~~Microphone device selection~~ — supported via Settings → Microphone
 - [ ] Live transcription preview
 - [ ] MCP server for AI agent integration
 
@@ -130,8 +193,8 @@ Set `HF_ENDPOINT=https://hf-mirror.com` and `HF_HUB_DISABLE_XET=1`, then relaunc
 Issues and PRs welcome!
 
 ```bash
-bash guide.sh test        # make tests green before submitting
-bash guide.sh reinstall   # refresh local install from source changes
+python3 -m unittest discover -s tests    # make tests green before submitting
+bash guide.sh install                    # refresh local install from source (idempotent)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Key design decisions are summarized in the [CHANGELOG.md](CHANGELOG.md) appendix.
@@ -141,7 +204,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Key design decisions are summarized in t
 - [OpenAI Whisper](https://github.com/openai/whisper) — the speech recognition model
 - [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) — Apple Silicon acceleration
 - [rumps](https://github.com/jaredks/rumps) — macOS menu-bar framework
-- [pynput](https://github.com/moses-palmer/pynput) — global keyboard listening
+- [Quartz Event Services](https://developer.apple.com/documentation/coregraphics/quartz_event_services) — global hotkeys & key capture
 
 ## 📄 License
 

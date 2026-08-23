@@ -9,6 +9,14 @@ import os
 import threading
 import wave
 
+# 运行期静默第三方进度条：模型已缓存时 huggingface_hub 仍做元数据校验，
+# 打印「Fetching N files / Download complete / Reconstruction complete」；
+# mlx_whisper 每次转写还会输出帧级 tqdm。两者对用户都是噪声。
+# setdefault：保留用户显式覆盖的能力；guide.sh 的 models 下载路径
+# 由 _prefetch_repo 临时恢复进度条，大流量下载仍有可见反馈。
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 import numpy as np
 
 from . import log as log_mod
@@ -77,17 +85,13 @@ def _hf_cached(repo_id: str) -> bool:
     return False
 
 
-def max_available() -> bool:
-    return _hf_cached(MODEL_REPOS["max"])
-
-
 def max_model_cached() -> bool:
     """max 档模型是否已缓存（guide.sh 门禁共用）。"""
     return _hf_cached(MODEL_REPOS["max"])
 
 
 def cache_summary_line() -> str:
-    """单行模型缓存状态（guide.sh status 共用）。"""
+    """单行模型缓存状态（guide.sh 交互菜单共用）。"""
     def mark(mode: str) -> str:
         return "✓" if _hf_cached(MODEL_REPOS[mode]) else "✗"
 
@@ -152,6 +156,9 @@ def _schedule_idle_unload(minutes: float):
     """N 分钟无转写后释放权重与 Metal 缓冲（minutes<=0 关闭）。"""
     global _idle_timer, _idle_minutes
     if minutes <= 0:
+        if _idle_timer is not None:
+            _idle_timer.cancel()
+            _idle_timer = None
         return
     _idle_minutes = minutes
     if _idle_timer is not None:
@@ -161,6 +168,11 @@ def _schedule_idle_unload(minutes: float):
     t.start()
     _idle_timer = t
     logger.debug("memory: idle unload scheduled in %.0f min", minutes)
+
+
+def apply_idle_unload(minutes: float):
+    """配置变更入口：取消旧定时器，立即按新值重排闲置卸载。"""
+    _schedule_idle_unload(float(minutes or 0))
 
 
 def _unload_model():
@@ -214,45 +226,55 @@ def is_loading() -> bool:
     return not _loading_event.is_set() and not any(_models.values())
 
 
+_PROGRESS_ENV_KEYS = ("HF_HUB_DISABLE_PROGRESS_BARS", "TQDM_DISABLE")
+
+
 def _prefetch_repo(repo_id: str) -> bool:
     """双源冗余下载：默认端点失败后自动切换 hf-mirror。
 
     镜像无法代理 Xet CAS 存储，故镜像路径强制 HF_HUB_DISABLE_XET=1；
     用子进程隔离镜像环境，避免污染当前进程的全局状态。
+    下载期间临时恢复进度条——1.8GB 级流量需要可见反馈。
     """
+    saved = {k: os.environ.pop(k, None) for k in _PROGRESS_ENV_KEYS}
     try:
-        from huggingface_hub import snapshot_download
+        try:
+            from huggingface_hub import snapshot_download
 
-        snapshot_download(repo_id)
-        return True
-    except Exception as e:
-        logger.warning("engine: fetch %s via default endpoint failed: %s", repo_id, e)
-
-    import subprocess
-    import sys
-
-    code = (
-        "import os; "
-        f"os.environ['HF_ENDPOINT']={_MIRROR_ENDPOINT!r}; "
-        "os.environ['HF_HUB_DISABLE_XET']='1'; "
-        "from huggingface_hub import snapshot_download; "
-        f"snapshot_download({repo_id!r})"
-    )
-    try:
-        r = subprocess.run(
-            [sys.executable, "-c", code],
-            timeout=_PREFETCH_TIMEOUT_S,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if r.returncode == 0:
-            logger.info("engine: fetched %s via mirror ✓", repo_id)
+            snapshot_download(repo_id)
             return True
-        logger.error("engine: mirror fetch of %s failed (rc=%s)", repo_id, r.returncode)
-        return False
-    except Exception:
-        logger.exception("engine: mirror fetch of %s crashed", repo_id)
-        return False
+        except Exception as e:
+            logger.warning("engine: fetch %s via default endpoint failed: %s", repo_id, e)
+
+        import subprocess
+        import sys
+
+        code = (
+            "import os; "
+            f"os.environ['HF_ENDPOINT']={_MIRROR_ENDPOINT!r}; "
+            "os.environ['HF_HUB_DISABLE_XET']='1'; "
+            "from huggingface_hub import snapshot_download; "
+            f"snapshot_download({repo_id!r})"
+        )
+        try:
+            r = subprocess.run(
+                [sys.executable, "-c", code],
+                timeout=_PREFETCH_TIMEOUT_S,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if r.returncode == 0:
+                logger.info("engine: fetched %s via mirror ✓", repo_id)
+                return True
+            logger.error("engine: mirror fetch of %s failed (rc=%s)", repo_id, r.returncode)
+            return False
+        except Exception:
+            logger.exception("engine: mirror fetch of %s crashed", repo_id)
+            return False
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
 
 
 _MIRROR_ENDPOINT = "https://hf-mirror.com"

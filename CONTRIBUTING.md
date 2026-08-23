@@ -10,7 +10,7 @@
 ```bash
 git clone https://github.com/emVisible/Thistelles.git
 cd Thistelles
-bash guide.sh install      # 构建并安装到 uv tool 环境
+bash guide.sh install      # 构建并安装到 uv tool 环境（幂等，重复执行即升级）
 ```
 
 ## 从源码运行
@@ -27,8 +27,13 @@ uv run python -m thistelles
 提交前必须跑通测试（CI 会自动执行）：
 
 ```bash
-bash guide.sh test         # 或: python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v   # 或: uv run python -m unittest discover
 ```
+
+测试除单测外还包含结构化接线测试（tests/test_wiring.py，纯 AST、跨平台）：
+i18n 双语键位对齐、apply_config 分支覆盖率、设置选择器与方法对应等——
+新增配置键或菜单动作时它们会自动把「断链」挡在提交前。
+用户侧故障优先引导运行 `bash guide.sh doctor` 自检。
 
 测试只覆盖纯逻辑模块（config / history / inserter 门禁 / transcriber 调度），
 GUI 层暂无自动化——涉及菜单行为的改动请手动验收。
@@ -36,7 +41,7 @@ GUI 层暂无自动化——涉及菜单行为的改动请手动验收。
 ## 源码改动后的本地刷新
 
 ```bash
-bash guide.sh reinstall    # 重装并重启应用
+bash guide.sh install      # 重装并重启应用（install 幂等，重复执行即升级）
 ```
 
 注意：运行中的进程加载的是启动时的代码，改完源码必须重装+重启才能生效。
